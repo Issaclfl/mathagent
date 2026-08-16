@@ -1,4 +1,4 @@
-"""论文修订闭环：审核 → 基于反馈修改 → 再审，直到通过或达最大轮数。
+﻿"""论文修订闭环：审核 → 基于反馈修改 → 再审，直到通过或达最大轮数。
 
 用法：
   python revise_paper.py                    # 用 data/results 里最新的论文
@@ -125,7 +125,7 @@ def main() -> None:
         )
 
         if report["passed"]:
-            print("🎉 质量门控通过")
+            print("[PASS] 质量门控通过")
             out = RESULTS_DIR / f"paper_passed_{time.strftime('%Y%m%d_%H%M%S')}.md"
             out.write_text(current_paper, encoding="utf-8")
             print(f"通过版论文已保存: {out}")
@@ -139,7 +139,7 @@ def main() -> None:
             stagnant += 1
             if stagnant >= max_stagnant:
                 print(
-                    f"⚠ 已连续 {max_stagnant} 轮综合分未提升"
+                    f"[!] 已连续 {max_stagnant} 轮综合分未提升"
                     f"（最好 {best_overall} 分），停止重写"
                 )
                 out = RESULTS_DIR / f"paper_force_{time.strftime('%Y%m%d_%H%M%S')}.md"
@@ -150,7 +150,7 @@ def main() -> None:
                 break
 
         if round_i >= max_rounds:
-            print(f"⚠ 已达最大轮数 {max_rounds}，接受当前版本")
+            print(f"[!] 已达最大轮数 {max_rounds}，接受当前版本")
             out = RESULTS_DIR / f"paper_force_{time.strftime('%Y%m%d_%H%M%S')}.md"
             out.write_text(current_paper, encoding="utf-8")
             print(f"强制接受版论文已保存: {out}")

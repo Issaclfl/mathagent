@@ -1,4 +1,4 @@
-"""数学建模智能体 - 主程序
+﻿"""数学建模智能体 - 主程序
 
 串联完整 pipeline：
   协调者(拆题) → 建模者(推荐算法) → 构建者(生成代码) → 求解者(执行修复) → 写作者(生成论文)
@@ -455,7 +455,7 @@ def run_pipeline(
         ask_path = write_ask_file("modeling_strategy", question, context, summary)
         _save_checkpoint(summary, start_time)
         print("\n" + "=" * 64)
-        print("  ⚠ 策略门控：建模前必须由人工拍板建模策略")
+        print("  [!] 策略门控：建模前必须由人工拍板建模策略")
         print(f"  提问文件: {ask_path}")
         print("  请编辑该文件填写 answer，然后运行:")
         print("  python hil_resume.py {0}".format(ask_path))
@@ -539,7 +539,7 @@ def run_pipeline(
         ask_path = write_ask_file("sensitivity_solver", question, context, summary)
         _save_checkpoint(summary, start_time)
         print("\n" + "=" * 64)
-        print("  ⚠ 策略门控：灵敏度分析求解器需人工拍板")
+        print("  [!] 策略门控：灵敏度分析求解器需人工拍板")
         print(f"  提问文件: {ask_path}")
         print("  请编辑该文件填写 answer，然后运行:")
         print("  python hil_resume.py {0}".format(ask_path))
@@ -811,7 +811,7 @@ def run_pipeline(
         ask_path = write_ask_file("path_lock", question, context, summary)
         _save_checkpoint(summary, start_time)
         print("\n" + "=" * 64)
-        print("  ⚠ 策略门控：最优路径需人工锁定")
+        print("  [!] 策略门控：最优路径需人工锁定")
         print(f"  提问文件: {ask_path}")
         print("  请编辑该文件填写 answer，然后运行:")
         print("  python hil_resume.py {0}".format(ask_path))
@@ -829,7 +829,7 @@ def run_pipeline(
             pending = write_pending(summary, summary["executions"], sub_problems)
             _save_checkpoint(summary, start_time)
             print("\n" + "=" * 64)
-            print("  ⚠ HIL 闸门：子问题数值【无 ground truth】，需人工确认")
+            print("  [!] HIL 闸门：子问题数值【无 ground truth】，需人工确认")
             print(f"  待确认文件: {pending}")
             print("  请编辑该文件填写 decision（confirm / edit+value / reject），")
             print("  然后运行: python hil_resume.py {0}".format(pending))
@@ -935,7 +935,7 @@ def run_pipeline(
             print(f"  论文已保存: {paper_result['paper_path']}")
             if paper_result["status"] == "partial":
                 for w in (paper_result.get("warnings") or []):
-                    print(f"    ⚠ {w}")
+                    print(f"    [!] {w}")
 
             # ── 质量门控审核 ──
             _step(7, f"总审 - 逻辑/数据/排版三重审核（第{round_i}轮）")
@@ -949,7 +949,7 @@ def run_pipeline(
             )
 
             if audit_report["passed"]:
-                print(f"  ✅ 三项均超过8分且综合超过9分，质量门控通过")
+                print(f"  [OK] 三项均超过8分且综合超过9分，质量门控通过")
                 break
 
             # 停滞保护：连续 N 轮综合分未提升则停止
@@ -960,12 +960,12 @@ def run_pipeline(
                 stagnant += 1
                 if stagnant >= max_stagnant:
                     print(
-                        f"  ⚠ 已连续 {max_stagnant} 轮综合分未提升"
+                        f"  [!] 已连续 {max_stagnant} 轮综合分未提升"
                         f"（最好 {best_overall} 分），停止重写"
                     )
                     audit_report["force_accepted"] = True
                     audit_report["accept_note"] = (
-                        f"\n\n---\n> ⚠ **质量门控未完全通过**"
+                        f"\n\n---\n> [!] **质量门控未完全通过**"
                         f"（已连续 {max_stagnant} 轮无提升）。"
                         f"最终评分：逻辑{scores['logic']}分、数据{scores.get('data', '跳过')}分、"
                         f"排版{scores['format']}分、综合{overall}分。"
@@ -974,17 +974,17 @@ def run_pipeline(
                     break
 
             if round_i >= max_rounds:
-                print(f"  ⚠ 已达最大轮数上限({max_rounds})，接受当前论文")
+                print(f"  [!] 已达最大轮数上限({max_rounds})，接受当前论文")
                 audit_report["force_accepted"] = True
                 audit_report["accept_note"] = (
-                    f"\n\n---\n> ⚠ **质量门控未完全通过**（已达轮数上限）。"
+                    f"\n\n---\n> [!] **质量门控未完全通过**（已达轮数上限）。"
                     f"最终评分：逻辑{scores['logic']}分、数据{scores.get('data', '跳过')}分、"
                     f"排版{scores['format']}分、综合{overall}分。"
                     "以下问题需人工复核修正。\n"
                 )
                 break
 
-            print(f"  ❌ 未通过（每项需>8分且综合>9分），反馈给写作者重写...")
+            print(f"  [FAIL] 未通过（每项需>8分且综合>9分），反馈给写作者重写...")
             feedback = audit_report["feedback"]
 
             # 保存审计循环断点（中断后 --resume 从下一轮继续，不再重跑本轮）
@@ -1066,7 +1066,7 @@ def run_pipeline(
             f"排版{sc['format']} 综合{audit['overall']})"
         )
         if audit.get("force_accepted"):
-            print(f"  ⚠ 已达最大重写轮数，论文被强制接受，需人工复核审核意见")
+            print(f"  [!] 已达最大重写轮数，论文被强制接受，需人工复核审核意见")
     print(f"  结果保存: {result_file}")
 
     return summary

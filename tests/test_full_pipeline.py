@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 from utils.file_parser import parse_file
@@ -34,7 +34,7 @@ print()
 
 # 拆题/推荐失败（LLM 空响应等）时优雅退出，不崩溃
 if not sub_problems or not result.get("sub_algorithms"):
-    print("⚠ 拆题或算法推荐返回空（可能是 LLM 临时不可用），测试提前结束")
+    print("[!] 拆题或算法推荐返回空（可能是 LLM 临时不可用），测试提前结束")
     raise SystemExit(0)
 
 # 4. 生成代码（只测试第一个子问题）
