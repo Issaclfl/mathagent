@@ -1,0 +1,91 @@
+# 数学建模智能体配置文件
+
+# 赛题拆解配置
+coordinator:
+  min_problems: 3
+  max_problems: 5
+  temperature: 0.2
+  max_retries: 2
+
+# 算法推荐配置
+modeler:
+  temperature: 0.2
+  algorithm_pool:
+    - 线性规划
+    - 整数规划
+    - 遗传算法
+    - 粒子群优化
+    - 模拟退火
+    - ARIMA时间序列
+    - 灰色预测GM(1,1)
+    - 指数平滑
+    - 回归分析
+    - 层次分析法(AHP)
+    - 熵权法
+    - TOPSIS
+    - 聚类分析
+    - 主成分分析(PCA)
+    - 神经网络
+    - 支持向量机(SVM)
+    - 决策树
+    - 随机森林
+  alias_map:
+    SVM: 支持向量机(SVM)
+    支持向量机: 支持向量机(SVM)
+    PCA: 主成分分析(PCA)
+    主成分分析: 主成分分析(PCA)
+    AHP: 层次分析法(AHP)
+    层次分析: 层次分析法(AHP)
+    "GM(1,1)": 灰色预测GM(1,1)
+    灰色预测: 灰色预测GM(1,1)
+
+# 建模构建配置
+builder:
+  temperature: 0.2
+
+# 代码执行配置
+solver:
+  max_retries: 3
+  timeout: 30
+
+# 论文生成配置
+writer:
+  temperature: 0.3
+  max_retries: 2
+  max_workers: 4
+
+# 质量门控配置（总审）
+auditor:
+  score_threshold: 8.0      # 每个子审核合规分必须超过该分数
+  overall_threshold: 9.0     # 三项平均合规分必须超过该分数
+  max_rounds: 8              # 审核-重写最大循环轮数（硬顶防失控，最坏8轮≈16次LLM调用）
+  max_stagnant_rounds: 2     # 连续 N 轮综合分未提升则停止（防无效循环）
+  temperature: 0.2
+  data_tolerance: 0.02       # 数据审核：论文数值与参考真值的相对容差（2%）
+
+# LLM调用配置
+llm:
+  max_retries: 3
+  retry_delay: 1.0
+  timeout: 60
+
+# 数值验证状态
+verification:
+  strict: true          # Writer/审核只引用已验证数值
+  placeholder: "[未验证]"  # 未验证数值的占位符
+
+# 人机协作（HIL）闸门
+# 渐进式流水线模式（人在环）：求解完成后无真值子问题暂停等人工确认数值，
+# 人工在 data/hil/pending_*.json 填写 decision 后 hil_resume.py 续跑。
+# 需全自动时可 python main.py --skip-hil
+hil:
+  enabled: true         # 默认开启：数值确认是渐进式模式的强制节点
+  output_dir: data/hil  # 待确认文件目录
+  # 策略门控（在建模策略分岔口强制暂停向人工请示，人工一句话锁死结构性错误）：
+  #   modeling_strategy   建模前：分步建模 vs 联合建模（锁"不建废模"）
+  #   sensitivity_solver  灵敏度分析前：精确求解器 vs 启发式（锁"不乱用算法"）
+  #   path_lock           求解后：最优路径锁定（锁"不自相矛盾"）
+  gates:
+    modeling_strategy: true
+    sensitivity_solver: true
+    path_lock: true

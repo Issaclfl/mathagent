@@ -1,0 +1,31 @@
+# ModAgent 运行依赖
+# 安装: pip install -r requirements.txt
+
+# ── Web 后端 ──
+fastapi>=0.110
+uvicorn>=0.29
+pydantic>=2.6
+python-multipart>=0.0.9
+
+# ── LLM 调用 ──
+requests>=2.31
+python-dotenv>=1.0
+
+# ── 配置/工具 ──
+pyyaml>=6.0
+filelock>=3.13
+
+# ── 文档解析 ──
+python-docx>=1.1
+pypdf>=4.2
+PyMuPDF>=1.24
+
+# ── 科学计算（Solver 执行 LLM 生成的代码需要）──
+numpy>=1.26
+pandas>=2.1
+matplotlib>=3.8
+scipy>=1.12
+scikit-learn>=1.4
+
+# ── 代码落盘（ipynb）──
+nbformat>=5.9

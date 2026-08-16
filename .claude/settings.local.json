@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from agents.coordinator import coordinator; print\\('coordinator import OK'\\)\")",
+      "Bash(python -c \"from agents.modeler import modeler; print\\('modeler import OK'\\)\")",
+      "Bash(python -c \"from agents.coordinator import coordinator; print\\('coordinator OK'\\)\")",
+      "Bash(python -c \"from agents.modeler import modeler; print\\('modeler OK'\\)\")",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('agents/coordinator.py', doraise=True\\); py_compile.compile\\('agents/modeler.py', doraise=True\\); print\\('syntax OK'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(cat)",
+      "Bash(python /tmp/write_modeler.py)",
+      "Bash(python -c \"from pathlib import Path; Path\\('_write_modeler.py'\\).write_text\\(open\\('_write_modeler.py'\\).read\\(\\) if Path\\('_write_modeler.py'\\).exists\\(\\) else 'print\\(1\\)', encoding='utf-8'\\), encoding='utf-8'\\)\")",
+      "Bash(python -c \"print\\('hello'\\)\")"
+    ]
+  }
+}

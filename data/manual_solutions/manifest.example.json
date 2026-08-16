@@ -1,0 +1,8 @@
+[
+  {
+    "sub_problem": "厚度",
+    "file": "solve_b2025.py",
+    "algorithm": "FFT干涉分析",
+    "math_model": "model_b2025.md"
+  }
+]

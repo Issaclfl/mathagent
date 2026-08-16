@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>壁纸插件测试</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; }
+        .btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 14px;
+        }
+        .btn:hover { background: #0056b3; }
+        .btn.danger { background: #dc3545; }
+        .btn.danger:hover { background: #c82333; }
+        #status {
+            margin-top: 20px;
+            padding: 15px;
+            background: #e9ecef;
+            border-radius: 5px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎨 DeepSeek Harness 壁纸插件测试</h1>
+        <p>点击下面的按钮来测试壁纸功能：</p>
+        
+        <button class="btn" onclick="setWallpaper()">设置壁纸</button>
+        <button class="btn danger" onclick="removeWallpaper()">移除壁纸</button>
+        <button class="btn" onclick="checkPlugin()">检查插件状态</button>
+        
+        <div id="status">
+            <strong>状态信息：</strong><br>
+            插件已加载: <span id="pluginLoaded">否</span><br>
+            当前壁纸: <span id="currentWallpaper">无</span>
+        </div>
+    </div>
+
+    <script>
+        // 检查插件是否加载
+        function checkPlugin() {
+            const loaded = typeof window.__DSH_WALLPAPER__ !== 'undefined';
+            document.getElementById('pluginLoaded').textContent = loaded ? '是' : '否';
+            
+            if (loaded) {
+                const config = window.__DSH_WALLPAPER__.config;
+                document.getElementById('currentWallpaper').textContent = 
+                    config.enabled ? config.light : '无';
+            }
+        }
+
+        // 设置壁纸
+        function setWallpaper() {
+            if (typeof window.__DSH_WALLPAPER__ !== 'undefined') {
+                window.__DSH_WALLPAPER__.setWallpaper('/wallpaper.jpg', '/wallpaper.jpg');
+                alert('壁纸已设置！');
+                checkPlugin();
+            } else {
+                alert('插件未加载！请确保 wallpaper.js 文件存在。');
+            }
+        }
+
+        // 移除壁纸
+        function removeWallpaper() {
+            if (typeof window.__DSH_WALLPAPER__ !== 'undefined') {
+                window.__DSH_WALLPAPER__.removeWallpaper();
+                alert('壁纸已移除！');
+                checkPlugin();
+            } else {
+                alert('插件未加载！');
+            }
+        }
+
+        // 页面加载时检查
+        window.onload = checkPlugin;
+    </script>
+</body>
+</html>

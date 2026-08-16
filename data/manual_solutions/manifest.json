@@ -1,0 +1,14 @@
+[
+  {
+    "sub_problem": "单界面一次反射透射的干涉模型",
+    "file": "../b2025/solve_b2025.py",
+    "algorithm": "FFT干涉分析",
+    "math_model": ""
+  },
+  {
+    "sub_problem": "干涉条纹极值间距或全光谱拟合",
+    "file": "../b2025/solve_b2025.py",
+    "algorithm": "FFT干涉分析",
+    "math_model": ""
+  }
+]
