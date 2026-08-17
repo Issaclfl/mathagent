@@ -35,10 +35,15 @@ PROMPT_TITLE = """\
 赛题：
 {problem_text}
 
+论文实际求解方法（各子问题与算法）：
+{sub_algorithms}
+
 要求：
-1. 标题应概括研究对象和方法
-2. 不要加编号、引号或额外说明
-3. 只返回标题文本"""
+1. 标题应概括研究对象和实际使用的核心方法
+2. **【一致性铁律】**标题中出现的任务/方法必须是上方"实际求解方法"中出现过的，
+   严禁引入赛题未要求且未实际求解的任务（如定价、调度、选址——除非实际求解了它）
+3. 不要加编号、引号或额外说明
+4. 只返回标题文本"""
 
 PROMPT_ABSTRACT = """\
 请根据以下信息撰写数学建模论文的摘要（200-300字）。
@@ -85,10 +90,20 @@ PROMPT_PROBLEM_ANALYSIS = """\
 对应算法：
 {sub_algorithms}
 
+各子问题实际建立的数学模型摘要（问题分析必须与之一致）：
+{model_digests}
+
+各子问题执行状态：
+{exec_status}
+
 要求：
 1. 每个子问题分析其数学本质和求解思路
-2. 说明为什么选择该算法
-3. 使用 Markdown 格式，每个子问题用二级标题"""
+2. **【一致性铁律】**方法描述必须与"实际模型摘要"严格一致：摘要用监督分类
+   就写监督分类；严禁引入摘要中不存在的方法（如摘要为 MLP 分类，不得写
+   自编码器/聚类/无监督学习）。执行失败的子问题，分析结尾注明该部分
+   因规模/求解困难降级处理，与后文保持一致
+3. 每个子问题用二级标题，**不要输出章节大标题**（如"二、问题分析"由系统统一添加）
+4. 使用 Markdown 格式"""
 
 PROMPT_ASSUMPTIONS = """\
 请为以下数学建模问题列出合理的模型假设。
@@ -112,8 +127,12 @@ PROMPT_SYMBOLS = """\
 
 使用的算法：{algorithms}
 
+各子问题实际数学模型摘要（符号必须取自实际模型，保证正文可直接沿用）：
+{model_digests}
+
 要求：
-1. 只列出正文公式中**实际会出现**的符号，不要列出未引用的符号
+1. 只列出实际模型公式中**实际会出现**的符号，不要列出未引用的符号；
+   同一概念全文只用一个符号（如需求量统一记为某一符号，不得各章各用一套）
 2. 使用 Markdown 表格格式：| 符号 | 含义 | 单位 |
 3. 按模型模块分组（如"基础数据"、"评价模型"、"预测模型"等）
 4. 符号数量控制在 20-30 个，精简为主"""
@@ -130,10 +149,14 @@ PROMPT_MODEL_SECTION = """\
 代码执行结果（节选）：
 {execution_output}
 
+全局符号表（本章公式必须沿用以下符号，新增符号需在文中定义）：
+{symbol_table}
+
 要求：
-1. 包含三个小节：问题分析、模型建立、模型求解与结果
+1. 包含三个小节，标题**固定**为（四个井号、无编号，不得增减小节或自行编号）：
+   `#### 问题分析`、`#### 模型建立`、`#### 模型求解与结果`
 2. 数学公式使用 LaTeX 格式（$..$ 行内，$$...$$ 独立行）
-3. 本章节内的子标题请使用 ####（四个井号），避免与主章节层级冲突
+3. **不要输出章节大标题**（如"五.2 xxx"由系统统一添加），从 `#### 问题分析` 直接开始
 
 【数据标注规则——必须严格遵守】
 - 如果代码执行结果包含具体数值（特征值、得分、预测值等），直接引用并制作结果表格，注明"如表X所示"
@@ -145,18 +168,15 @@ PROMPT_MODEL_SECTION = """\
 - 如果整个表格无数据可填，省略该表格，不要输出空表
 
 【引用标注要求】
-- 在论述具体方法时（如 PCA、TOPSIS、ARIMA 等），在其首次出现处标注参考文献编号
-- 格式：算法名称[编号]，如"主成分分析[3]""TOPSIS[1]"
-- 参考文献列表由系统在文末统一生成，您只需在正文中编号标注
+- 在论述具体方法时，用**稳定键**标注参考文献，格式：方法名[[键]]，如"ARIMA模型[[ARIMA]]""主成分分析[[PCA]]"
+- 可用键（只能用这些）：ARIMA、GM、PCA、TOPSIS、AHP、NN、SVM、RF、GA、PSO、SA、LP、IP、CLUSTER、ENTROPY、REGRESSION、XGBOOST
+- 编号由系统在文末统一分配，**不要**自己写 [数字] 编号，也**不要**在本章节末尾输出参考文献列表
 
 【图表引用要求——必须严格遵守】
 - 若"代码执行结果"中包含 `![求解结果图](figures/...)` 形式的图片引用，
   **必须原样保留在论文中**，并在其前后补充图标题（如"图1 各时刻动态风险热力图"）与一段图注
 - 图片引用格式保持 `![图N 描述](相对路径)` 不变，禁止改动路径或删除图片
 - 每张图需在正文中至少提及一次（"如图N所示"）
-- **【路径规范】** 图片路径必须是从 `data/results/` 开始的相对路径，**禁止**包含时间戳目录和深层子目录：
-  - 禁止：`figures/20260816_013958_489/sub2/decision_tree_visualization.png`
-  - 正确：`figures/决策树分组.png`（系统在文末统一处理图片路径）
 - 若无法确认图片文件存在，仅用"图N 描述"文字引用，**不插入**任何文件路径
 
 {model_section_guide}"""
@@ -175,7 +195,8 @@ PROMPT_SENSITIVITY = """\
 2. 选择 2-3 个关键参数进行分析
 3. 每个参数给出：变化范围、对结果的影响、稳定性结论
 4. 使用具体数据或表格支撑分析
-5. 在关键论述处标注参考文献引用（格式：方法名[编号]）
+5. 在关键论述处标注参考文献引用（稳定键格式：方法名[[键]]，键表见模型章节要求）
+6. **不要输出章节大标题**（如"六、灵敏度分析"由系统统一添加），直接从正文/小节开始
 
 {sensitivity_guide}"""
 
@@ -188,7 +209,9 @@ PROMPT_EVALUATION = """\
 要求：
 1. 分为"模型优点"、"模型缺点"、"模型推广"三部分
 2. 每部分列出 3-5 点
-3. 使用 Markdown 格式
+3. 小节标题用 ### 7.1 / ### 7.2 / ### 7.3 格式
+4. **不要输出章节大标题**（如"七、模型评价与推广"由系统统一添加）
+5. 使用 Markdown 格式
 
 {evaluation_guide}"""
 
@@ -268,6 +291,13 @@ class WriterAgent(BaseAgent):
         # 保序去重 + 过滤 None（set 顺序跨运行不稳定，None 会导致 join 崩溃）
         algo_set = "、".join(dict.fromkeys(v for v in algorithms.values() if v))
 
+        # 各子问题实际模型摘要（问题分析/符号表与实际求解一致性的锚点：
+        # 此前问题分析只拿算法名，LLM 脑补出"自编码器聚类"而实际是 MLP
+        # 监督分类，两处描述矛盾——实测 Q2 硬伤根因）
+        model_digests = self._build_model_digests(sub_problems, models)
+        # 各子问题执行状态（让问题分析对失败子问题的措辞与后文一致）
+        exec_status = self._build_exec_status(executions, sub_problems)
+
         # 组装执行结果摘要
         try:
             exec_summary = self._build_exec_summary(executions, sub_problems)
@@ -283,8 +313,20 @@ class WriterAgent(BaseAgent):
         sections: dict[str, str] = {}
         warnings: list[str] = []
 
+        # ── 串行生成符号表（先于模型章节：符号表基于实际模型生成，
+        #    再注入各模型章节强制沿用，保证全文符号一致）─────────
+        self.logger.info("生成符号表（先行，供模型章节沿用）...")
+        symbols = self._gen_section(
+            PROMPT_SYMBOLS.format(
+                problem_text=problem_text[:800],
+                algorithms=algo_set,
+                model_digests=model_digests,
+            ) + _fb_block("符号说明"),
+            temperature, max_retries,
+        )
+
         # ── 并行生成独立章节 ──────────────────────────────────
-        self.logger.info("并行生成独立章节（摘要/重述/分析/假设/符号/评价）...")
+        self.logger.info("并行生成独立章节（摘要/重述/分析/假设/评价）...")
         independent_tasks = {
             "abstract": PROMPT_ABSTRACT.format(
                 problem_text=problem_text[:1500],
@@ -299,15 +341,13 @@ class WriterAgent(BaseAgent):
                 problem_text=problem_text[:1200],
                 sub_problems="\n".join(f"{i+1}. {sp}" for i, sp in enumerate(sub_problems)),
                 sub_algorithms=algo_lines,
+                model_digests=model_digests,
+                exec_status=exec_status,
             ) + _fb_block("问题分析"),
             "assumptions": PROMPT_ASSUMPTIONS.format(
                 problem_text=problem_text[:1200],
                 sub_problems="\n".join(f"- {sp}" for sp in sub_problems),
             ) + _fb_block("模型假设"),
-            "symbols": PROMPT_SYMBOLS.format(
-                problem_text=problem_text[:800],
-                algorithms=algo_set,
-            ) + _fb_block("符号说明"),
             "evaluation": PROMPT_EVALUATION.format(
                 problem_text=problem_text[:800],
                 algorithms=algo_set,
@@ -352,6 +392,7 @@ class WriterAgent(BaseAgent):
                 algorithm=algorithms.get(sp, "未确定"),
                 math_model=self._smart_truncate(math_model, 3000),
                 execution_output=self._smart_truncate(exec_output, 2000),
+                symbol_table=self._smart_truncate(symbols, 1500),
                 model_section_guide=MODEL_SECTION_GUIDE,
             ) + _fb_block("模型建立与求解")
             # 人工策略决定（路径锁定等）注入：论文只呈现人工拍板的路线
@@ -391,10 +432,13 @@ class WriterAgent(BaseAgent):
             temperature, max_retries,
         )
 
-        # ── 生成标题（LLM 辅助） ──────────────────────────────
+        # ── 生成标题（LLM 辅助，注入实际算法防"动态定价"式脑补）──
         self.logger.info("生成论文标题...")
         title = self._gen_section(
-            PROMPT_TITLE.format(problem_text=problem_text[:1000]) + _fb_block("摘要", "全文"),
+            PROMPT_TITLE.format(
+                problem_text=problem_text[:1000],
+                sub_algorithms=algo_lines,
+            ) + _fb_block("摘要", "全文"),
             temperature, max_retries,
         )
         title = self._clean_title(title)
@@ -423,7 +467,7 @@ class WriterAgent(BaseAgent):
         paper_parts.append(f"## {ch['问题重述']}、问题重述\n\n{sections.get('restatement', '')}")
         paper_parts.append(f"## {ch['问题分析']}、问题分析\n\n{sections.get('analysis', '')}")
         paper_parts.append(f"## {ch['模型假设']}、模型假设\n\n{sections.get('assumptions', '')}")
-        paper_parts.append(f"## {ch['符号说明']}、符号说明\n\n{sections.get('symbols', '')}")
+        paper_parts.append(f"## {ch['符号说明']}、符号说明\n\n{symbols}")
         paper_parts.append(f"## {ch['模型建立与求解']}、模型建立与求解\n\n" + "\n\n".join(model_sections))
         paper_parts.append(f"## {ch['灵敏度分析']}、灵敏度分析\n\n{sensitivity}")
         paper_parts.append(f"## {ch['模型评价与推广']}、模型评价与推广\n\n{sections.get('evaluation', '')}")
@@ -431,15 +475,18 @@ class WriterAgent(BaseAgent):
 
         paper = "\n\n---\n\n".join(paper_parts)
 
-        # 后处理：插入可用图表
+        # 后处理：插入可用图表（按本次任务执行记录，防多任务串图）
         paper = self._insert_figures(paper, summary)
 
-        # 后处理：检查引用标记
-        paper = self._check_citations(paper, references)
+        # 后处理：删除章节内 LLM 自带的参考文献块（与文末列表编号冲突）
+        paper = self._strip_inline_references(paper)
 
         # 后处理：确定性清理（零 LLM 调用，规则引擎兜底）——
         # 删除本地路径、占位符、元评论等泄漏（防止 LLM 不遵守 prompt 时污染论文）
         paper = self._sanitize_paper(paper)
+
+        # 后处理：[[稳定键]] 引用替换为文末参考文献实际编号
+        paper = self._link_citations(paper, references)
 
         # 后处理：标题规范化（零 LLM 调用）——
         # 修复 LLM 自带标题导致的章节重复/层级混乱（历史 bug）：
@@ -511,6 +558,41 @@ class WriterAgent(BaseAgent):
             self.logger.warning(f"赛题文件读取失败，降级为空文本: {e}")
             return ""
 
+    @staticmethod
+    def _build_model_digests(sub_problems: list[str], models: list[dict]) -> str:
+        """各子问题实际数学模型的压缩摘要（问题分析/符号表的一致性锚点）。
+
+        问题分析与模型章节是两个独立 LLM 调用，中间只共享粗粒度算法名时
+        两处方法描述会互相矛盾（实测：分析写自编码器聚类、实现是 MLP 分类）。
+        把 builder 实际生成的 math_model 摘要注入两处 prompt 锚定一致性。
+        """
+        import re as _re
+        lines = []
+        for i, sp in enumerate(sub_problems):
+            md = models[i] if i < len(models) else {}
+            if not isinstance(md, dict):
+                md = {}
+            text = _re.sub(r"\s+", " ", md.get("math_model", "") or "").strip()
+            digest = text[:150] + ("…" if len(text) > 150 else "")
+            lines.append(f"{i+1}. {sp}\n   实际模型摘要: {digest or '（无）'}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_exec_status(executions: list[dict], sub_problems: list[str]) -> str:
+        """各子问题执行状态一句话摘要（让问题分析措辞与实际结果对齐）。"""
+        desc_map = {
+            "ok": "执行成功，有真实数值结果",
+            "error": "执行失败（后文将如实说明原因并给出降级处理）",
+        }
+        lines = []
+        for i, sp in enumerate(sub_problems):
+            ex = executions[i] if i < len(executions) else {}
+            if not isinstance(ex, dict):
+                ex = {}
+            desc = desc_map.get(ex.get("status", "未执行"), "未执行")
+            lines.append(f"{i+1}. {sp}: {desc}")
+        return "\n".join(lines)
+
     def _build_model_exec_summary(self, execution: dict) -> str:
         """为模型章节组装精简的执行结果：优先结构化指标，避免塞入原始长输出。"""
         if execution.get("status") != "ok":
@@ -541,12 +623,14 @@ class WriterAgent(BaseAgent):
         if metrics.get("tables"):
             parts.append("数据表格:")
             parts.extend(f"  {t}" for t in metrics["tables"][:5])
-        # 图片引用（求解产生的热力图/Pareto 前沿等，论文必须引用）
+        # 图片引用（求解产生的热力图/Pareto 前沿等，论文必须引用）。
+        # 只传文件名不传完整路径——带时间戳子目录的路径会被 LLM 原样抄进
+        # 论文（实测本地路径泄漏），实际路径由 _insert_figures 统一重写
         figures = execution.get("figures") or []
         if figures:
             parts.append("已生成图表（论文中必须用 ![图X描述](相对路径) 引用并配图标题）:")
             for f in figures[:6]:
-                parts.append(f"  ![求解结果图]({f})")
+                parts.append(f"  ![求解结果图](figures/{Path(str(f)).name})")
         if parts:
             return "\n".join(parts)
 
@@ -651,94 +735,157 @@ class WriterAgent(BaseAgent):
         return "\n".join(lines)
 
     def _insert_figures(self, paper: str, summary: dict) -> str:
-        """扫描 figures 目录，将可用图表插入论文的模型求解章节末尾。"""
-        from pathlib import Path
-        import time
+        """将本次 pipeline 各子问题产生的图表接入论文。
+
+        图片来源：summary['executions'][i]['figures']（相对 RESULTS_DIR 的
+        真实产物路径）——不扫描 figures 目录取"最新目录"：Web 多任务并发时
+        会把其它任务的图插进本文（串图），且固定 [:5] 会静默丢弃超出的图。
+
+        做三件事：
+        1. 复制图片到扁平目录 figures/paper/sub{i}_{name}（去时间戳子目录）；
+        2. 重写论文中 LLM 保留的图片引用路径（按文件名匹配到扁平路径）；
+        3. 未被正文引用的图，插入对应子问题章节（### 五.i）末尾。
+        """
+        import re
         import shutil
 
-        # 查找最新的 figures 目录
-        fig_base = Path("data/results/figures")
-        if not fig_base.exists():
-            return paper
-
-        fig_dirs = sorted([d for d in fig_base.iterdir() if d.is_dir()])
-        if not fig_dirs:
-            return paper
-
-        latest_dir = fig_dirs[-1]
-        # 并行求解后每个子问题图片在独立子目录 sub{i}/ 下，需递归扫描
-        fig_files = (
-            sorted(latest_dir.rglob("*.png"))
-            + sorted(latest_dir.rglob("*.jpg"))
-            + sorted(latest_dir.rglob("*.pdf"))
-        )
-        if not fig_files:
-            return paper
-
-        # 将图片复制到扁平目录 data/results/figures/paper/figN.ext
-        # （去除时间戳子目录，论文引用干净的相对路径，PDF 编译时文件必须真实存在）
-        flat_dir = Path("data/results/figures/paper")
-        flat_dir.mkdir(parents=True, exist_ok=True)
-        fig_refs: list[tuple[str, str]] = []  # (显示名, 相对引用路径)
-        for i, fig in enumerate(fig_files[:5], 1):
-            ext = fig.suffix
-            dest = flat_dir / f"fig{i}{ext}"
-            try:
-                shutil.copy2(fig, dest)
-            except OSError:
+        # 按子问题顺序收集图片（仅执行成功的子问题）
+        figs_by_sub: dict[int, list[Path]] = {}
+        for i, ex in enumerate(summary.get("executions") or [], 1):
+            if not isinstance(ex, dict) or ex.get("status") != "ok":
                 continue
-            fig_refs.append((f"图{i} {fig.stem}", f"figures/paper/fig{i}{ext}"))
-
-        if not fig_refs:
+            for f in ex.get("figures") or []:
+                p = RESULTS_DIR / str(f)
+                if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".pdf"):
+                    figs_by_sub.setdefault(i, []).append(p)
+        if not figs_by_sub:
             return paper
 
-        # 构建图片引用块
-        fig_block = "\n\n### 模型结果可视化\n\n"
-        for label, ref in fig_refs:
-            fig_block += f"![{label}]({ref})\n\n"
+        # 复制到扁平目录并建立 文件名→扁平引用 映射（同名以先出现者为准）
+        flat_dir = RESULTS_DIR / "figures" / "paper"
+        flat_dir.mkdir(parents=True, exist_ok=True)
+        name_to_ref: dict[str, str] = {}
+        for i in sorted(figs_by_sub):
+            for src in figs_by_sub[i]:
+                dest = flat_dir / f"sub{i}_{src.name}"
+                try:
+                    shutil.copy2(src, dest)
+                except OSError:
+                    continue
+                name_to_ref.setdefault(src.name, f"figures/paper/{dest.name}")
 
-        # 在"模型建立与求解"章节末尾插入（在"灵敏度分析"之前）
-        # 使用正则匹配：章节标题可能是 "## 灵敏度分析" 或 "## 六、灵敏度分析" 等
-        import re
-        sensitivity_pattern = r"^##\s*(?:[一二三四五六七八九十]+[、.]?\s*)?灵敏度分析"
-        match = re.search(sensitivity_pattern, paper, re.MULTILINE)
-        if match:
-            insert_pos = match.start()
-            paper = paper[:insert_pos] + fig_block + paper[insert_pos:]
-        else:
-            # 找不到标记，追加到论文末尾（参考文献之前）
-            if "## 参考文献" in paper:
-                paper = paper.replace("## 参考文献", fig_block + "\n## 参考文献", 1)
-            else:
-                paper += fig_block
+        # 重写论文中的图片引用（LLM 保留的 figures/时间戳/.../name → 扁平路径）
+        paper = re.sub(
+            r"(!\[[^\]]*\])\((figures/[^)]+)\)",
+            lambda m: f"{m.group(1)}({name_to_ref.get(m.group(2).rsplit('/', 1)[-1], m.group(2))})",
+            paper,
+        )
+
+        # 未被正文引用的图，插入对应子问题章节末尾（### 五.i 标题 → 下一标题前）
+        chapter_pat = re.compile(r"^###\s+[一二三四五六七八九十]+\.(\d+)\s", re.MULTILINE)
+        inserts: list[tuple[int, str]] = []  # (插入位置, 图块)
+        for m in chapter_pat.finditer(paper):
+            i = int(m.group(1))
+            if i not in figs_by_sub:
+                continue
+            rest = paper[m.end():]
+            nxt = re.search(r"^#{2,3}\s", rest, re.MULTILINE)
+            span_end = m.end() + (nxt.start() if nxt else len(rest))
+            blocks = [
+                f"![{src.stem}]({ref})"
+                for src in figs_by_sub[i]
+                if (ref := name_to_ref.get(src.name)) and f"]({ref})" not in paper
+            ]
+            if blocks:
+                inserts.append((span_end, "\n\n" + "\n\n".join(blocks) + "\n\n"))
+        # 倒序插入（从后往前，避免位置位移）
+        for pos, block in sorted(inserts, key=lambda x: -x[0]):
+            paper = paper[:pos] + block + paper[pos:]
 
         return paper
 
-    def _check_citations(self, paper: str, references: str) -> str:
-        """检查正文中是否有参考文献引用标记，仅警告不自动修复。"""
+    @staticmethod
+    def _strip_inline_references(paper: str) -> str:
+        """删除正文中 LLM 自带的参考文献块（独立成行的 [N] 引文行）。
+
+        文末有系统统一的参考文献列表；模型章节 LLM 常自带 [1] xxx 块
+        （实测与文末编号冲突、章节末尾突兀）。只处理 "## 参考文献" 之前
+        的正文；引文行（[N] 开头且有实际内容）与游离的"参考文献"块标题整行删除。
+        """
         import re
-        ref_nums = re.findall(r"^\[(\d+)\]", references, re.MULTILINE)
-        if not ref_nums:
-            return paper
-
-        body = paper.split("## 参考文献")[0] if "## 参考文献" in paper else paper
-        citations_found = re.findall(r"\[(\d+)\]", body)
-
-        if not citations_found:
-            self.logger.warning(
-                "正文中未找到参考文献引用标记。"
-                "参考文献列表包含 %s，但正文未引用。"
-                "建议在方法首次出现处手动添加引用（如 PCA[3]）。"
-                % ", ".join(f"[{n}]" for n in ref_nums[:5])
+        body, sep, tail = paper.partition("## 参考文献")
+        _ref_line = re.compile(r"^\s*\[\d+\]\s*\S")
+        kept = [
+            l for l in body.splitlines()
+            if not (
+                (_ref_line.match(l) and len(l.strip()) > 15)
+                or l.strip() in ("参考文献", "**参考文献**")
             )
-        else:
-            uncited = set(ref_nums) - set(citations_found)
-            if uncited:
-                self.logger.info(
-                    f"部分参考文献未在正文中引用: {', '.join(f'[{n}]' for n in sorted(uncited, key=int))}"
-                )
+        ]
+        return "\n".join(kept) + sep + tail
 
-        return paper
+    # 引用稳定键 → 文末参考文献行的检测词（小写子串匹配）
+    _CITE_KEYS: dict[str, list[str]] = {
+        "arima": ["arima", "time series", "时间序列", "box"],
+        "gm": ["灰色", "grey", "邓聚龙"],
+        "pca": ["principal component", "主成分", "jolliffe"],
+        "topsis": ["topsis", "hwang"],
+        "ahp": ["analytic hierarchy", "ahp", "saaty", "层次分析"],
+        "nn": ["neural", "神经网络", "bishop", "lecun", "deep learning", "goodfellow"],
+        "svm": ["support vector", "vapnik"],
+        "rf": ["random forest", "breiman", "随机森林"],
+        "ga": ["genetic algorithm", "遗传算法", "goldberg"],
+        "pso": ["particle swarm", "粒子群", "kennedy"],
+        "sa": ["simulated annealing", "模拟退火", "kirkpatrick"],
+        "lp": ["linear programming", "线性规划", "bazaraa"],
+        "ip": ["integer programming", "整数规划", "wolsey"],
+        "cluster": ["cluster", "聚类", "kaufman"],
+        "entropy": ["entropy", "熵权", "shannon"],
+        "regression": ["regression", "回归", "seber"],
+        "xgboost": ["xgboost"],
+    }
+
+    @classmethod
+    def _link_citations(cls, paper: str, references: str) -> str:
+        """把正文的 [[键]] 引用替换为文末参考文献的实际编号 [N]。
+
+        正文 LLM 自标 [N] 与文末列表是两次独立生成，编号无法对应（实测
+        互相冲突）。改为稳定键：正文写 [[ARIMA]]，此处按文末列表实际内容
+        解析 键→编号 映射后统一替换；无法对应的键删除标注、保留方法名。
+        """
+        import re
+        key_to_num: dict[str, str] = {}
+        for m in re.finditer(r"^\[(\d+)\]\s*(.+)$", references, re.MULTILINE):
+            num, text = m.group(1), m.group(2).lower()
+            for key, words in cls._CITE_KEYS.items():
+                if key in key_to_num:
+                    continue
+                if any(w in text for w in words):
+                    key_to_num[key] = num
+        unmatched: set[str] = set()
+
+        def _repl(m: re.Match) -> str:
+            key = m.group(1).strip().lower()
+            num = key_to_num.get(key)
+            if num is None:
+                # 宽松匹配：标注键与映射键互为子串（如 [[ARIMA时间序列]]）
+                num = next(
+                    (n for k, n in key_to_num.items() if k in key or key in k),
+                    None,
+                )
+            if num is None:
+                unmatched.add(key)
+                return ""
+            return f"[{num}]"
+
+        body, sep, tail = paper.partition("## 参考文献")
+        body = re.sub(r"\[\[([^\[\]]+)\]\]", _repl, body)
+        if unmatched:
+            logger.warning(
+                "正文引用键未在参考文献中找到对应条目（已移除标注）: %s",
+                ", ".join(sorted(unmatched)),
+            )
+        return body + sep + tail
 
     def _gen_references_static(self, algorithms: dict[str, str]) -> str:
         """静态参考文献映射（LLM 生成失败时的兜底）。"""
@@ -847,54 +994,97 @@ class WriterAgent(BaseAgent):
 
         处理 LLM 自带标题导致的章节层级混乱与重复（历史实测 bug）：
         1. 系统章节（## 一、问题重述 / ## 摘要 / ## 参考文献 等）保留为二级；
-        2. LLM 在章节内容里自带的二级标题（## 1. xxx / ## 6. 灵敏度分析）降为三级
-           （嵌套在系统章节之下）；
-        3. 与当前章节名相同的标题直接删除（如"## 6. 灵敏度分析"出现在
-           "## 六、灵敏度分析"下是重复标题）；
-        4. LLM 重复输出的子问题标题（### 5.3 xxx 重复系统 ### 五.3 xxx）删除。
+           序号按固定顺序递增校验——LLM 伪造的"## 七、xxx"（序号超前/重复）
+           会被降级或删除，不再被误认为系统章节（实测论文出现连续两个
+           "## 七、模型评价与推广"）；
+        2. LLM 在章节内容里自带的二级标题（## 1. xxx / ## 6. 灵敏度分析）降为三级；
+        3. 系统章节标题后紧跟的"六、模型灵敏度分析与讨论"式残留短行
+           （LLM 自带的无 # 章节标题）删除；
+        4. 四级及以下标题（####/#####）剥离 LLM 自带编号——系统的编号体系
+           （### 五.4）与 LLM 自带编号（#### 5.4.1）并存是实测编号混乱来源；
+        5. LLM 重复输出的子问题标题（### 5.3 xxx 重复系统 ### 五.3 xxx）删除。
         """
         import re
+        _CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+                   "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
         lines = paper.splitlines()
         out: list[str] = []
         current_chapter = ""   # 当前系统章节名（去编号后）
         seen_sub_titles: set[str] = set()  # 系统已生成的子问题标题
+        seen_system: set[str] = set()      # 已出现的系统章节名（摘要/一~七/参考文献）
+        last_seq = 0           # 最近一个合法系统章节的中文序号（摘要=0）
+        prev_was_sys = False   # 上一有效行是否系统章节标题（用于清理残留标题行）
 
         # 系统章节：中文序号 + 章节名（如"一、问题重述"），或摘要/参考文献
         _sys_chapter = re.compile(
             r"^##\s+([一二三四五六七八九十]+)[、.．]\s*(.+?)\s*$"
         )
+        # 系统标题后残留的无 # 章节标题（如"六、模型灵敏度分析与讨论"）
+        _orphan_chapter = re.compile(r"^[一二三四五六七八九十]+[、.．]")
 
         for line in lines:
-            # 系统章节标题
+            # ── 残留标题清理：系统标题后（允许空行间隔）紧跟的"N、xxx"短行 ──
+            if prev_was_sys:
+                s = line.strip()
+                if not s:
+                    out.append(line)
+                    continue
+                prev_was_sys = False
+                if (
+                    not s.startswith("#")
+                    and _orphan_chapter.match(s)
+                    and len(s) < 40
+                ):
+                    continue  # LLM 自带的无 # 章节标题，与系统标题视觉重复
+
+            # ── 系统章节标题：序号必须按顺序递增，且章节名不重复 ──
             m = _sys_chapter.match(line)
             if m:
-                current_chapter = m.group(2).strip()
+                num, name = m.group(1), m.group(2).strip()
+                if name in seen_system:
+                    continue  # 重复的系统格式标题：LLM 伪造，删除
+                seq = _CN_NUM.get(num, 0)
+                if seq != last_seq + 1:
+                    # 序号跳跃：早期章节里伪造的后期系统标题 → 降为三级内容标题
+                    out.append(f"### {num}、{name}")
+                    continue
+                last_seq = seq
+                seen_system.add(name)
+                current_chapter = name
                 seen_sub_titles.clear()
                 out.append(line)
+                prev_was_sys = True
                 continue
+            prev_was_sys = False
             if line.strip() in ("## 摘要", "## 参考文献"):
-                current_chapter = "摘要" if "摘要" in line else "参考文献"
+                bare = "摘要" if "摘要" in line else "参考文献"
+                if bare in seen_system:
+                    continue  # LLM 伪造的重复摘要/参考文献标题
+                seen_system.add(bare)
+                current_chapter = bare
                 seen_sub_titles.clear()
                 out.append(line)
+                prev_was_sys = True
                 continue
 
-            # 二级标题（非系统章节）：LLM 自带 → 降为三级
+            # ── 四级及以下标题：剥离 LLM 自带编号（编号统一由系统层管理）──
+            m4 = re.match(r"^(#{4,})\s+(.+?)\s*$", line)
+            if m4:
+                bare4 = self._strip_heading_num(m4.group(2))
+                out.append(f"{m4.group(1)} {bare4 or m4.group(2)}")
+                continue
+
+            # ── 二级标题（非系统章节）：LLM 自带 → 降为三级 ──
             m2 = re.match(r"^##\s+(.+?)\s*$", line)
             if m2:
                 title = m2.group(1).strip()
                 bare = self._strip_heading_num(title)
                 if current_chapter and bare == current_chapter:
                     continue  # 与当前章节重复（如"6. 灵敏度分析"在"六、灵敏度分析"下）
-                # 降为三级；若仍是系统章节名重复（如"模型建立与求解"再次出现）也删除
-                if bare in (
-                    "问题重述", "问题分析", "模型假设", "符号说明",
-                    "模型建立与求解", "灵敏度分析", "模型评价与推广",
-                ) and bare == current_chapter:
-                    continue
                 out.append(f"### {title}")
                 continue
 
-            # 三级标题：检测是否重复系统子问题标题（### 五.3 xxx）
+            # ── 三级标题：检测是否重复系统子问题标题（### 五.3 xxx）──
             m3 = re.match(r"^###\s+(.+?)\s*$", line)
             if m3:
                 title = m3.group(1).strip()

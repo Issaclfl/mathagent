@@ -594,7 +594,15 @@ def run_pipeline(
                         )
 
                 print(f"  执行 {i}. {sp[:40]}...", end=" ", flush=True)
-                _task_dir = summary.get("task_dir") or None
+                # 数据上下文：优先任务目录（Web 并发）；CLI 无任务目录时
+                # 用 data_dir（赛题数据所在目录）兜底——否则 solver 沙箱里
+                # 没有任何数据文件，LLM 只能编造模拟数据（实测 Q1 用了
+                # generate_simulated_data 而非真实 bike_data.csv）
+                _task_dir = (
+                    summary.get("task_dir")
+                    or summary.get("data_dir")
+                    or None
+                )
                 if res.get("manual_solution"):
                     # 人工求解代码：只执行一次，不做 LLM 自动修复（视为可信）
                     raw = solver.run_code(code, extra_files=extra_files, figure_dir=fig_dir, task_dir=_task_dir)
@@ -624,54 +632,78 @@ def run_pipeline(
                 else:
                     exec_result = solver.run(code, extra_files=extra_files, figure_dir=fig_dir, task_dir=_task_dir)
 
-                    # ── 失败回传：让 Builder 带着报错重新建模（最多1轮）──
-                    first_error: str | None = None
-                    if (
-                        exec_result["status"] != "ok"
-                        and exec_result.get("last_stderr")
-                        and not exec_result.get("safety_fail")
-                    ):
-                        first_error = exec_result.get("error", "") or exec_result.get("last_stderr", "")
+                # ── 失败回传：让 Builder 带着报错重新建模（最多1轮）──
+                first_error: str | None = None
 
-                        # Agent Loop：让 LLM 分析错误原因
-                        try:
-                            from utils.agent_loop import analyze_and_fix_code
-                            print(f"[Agent Loop] 分析错误...", end="", flush=True)
-                            analysis = analyze_and_fix_code(first_error, code, sp)
-                            if analysis["status"] == "fixed" and analysis["fixed_code"]:
-                                print(f" → LLM 生成修复代码 ({analysis['rounds']} 轮)")
-                                exec_result = solver.run(analysis["fixed_code"], extra_files=extra_files, figure_dir=fig_dir, task_dir=_task_dir)
-                                exec_result["agent_loop_fix"] = True
-                                exec_result["first_error"] = first_error
-                            else:
-                                # Agent Loop 未能修复，回退到 Builder 重试
-                                print(f" → 回退到 Builder 重试")
-                                algo = algorithm_map.get(sp, "未确定")
-                                rebuilt = builder.run(
-                                    problem_text, sp, algo,
-                                    feedback=first_error,
-                                    data_dir=summary.get("data_dir"),
-                                )
-                                if rebuilt.get("code"):
-                                    res["code"] = rebuilt["code"]
-                                    if rebuilt.get("math_model"):
-                                        res["math_model"] = rebuilt["math_model"]
-                                    exec_result = solver.run(rebuilt["code"], extra_files=extra_files, figure_dir=fig_dir, task_dir=_task_dir)
-                                    exec_result["rebuild_attempted"] = True
-                                    exec_result["first_error"] = first_error
-                        except Exception as e:
-                            print(f" → Agent Loop 异常: {e}，回退到 Builder")
-                            algo = algorithm_map.get(sp, "未确定")
-                            rebuilt = builder.run(
-                                problem_text, sp, algo,
-                                feedback=first_error,
-                                data_dir=summary.get("data_dir"),
-                            )
-                            if rebuilt.get("code"):
-                                res["code"] = rebuilt["code"]
-                                exec_result = solver.run(rebuilt["code"], extra_files=extra_files, figure_dir=fig_dir, task_dir=_task_dir)
-                                exec_result["rebuild_attempted"] = True
-                                exec_result["first_error"] = first_error
+                def _rebuild_with_fallback(error_text: str) -> dict:
+                    """带降级指令的重建模：原算法多轮失败后不再坚持原方案，
+                    强制改用更简单可靠的启发式方法，保证子问题有数值产出
+                    （宁可结果次优，不可整章"求解失败"——实测 Q4 无降级时
+                    3轮修复+重建模全在同算法内空转，最终论文留白）。
+
+                    注意：降级指令放在 feedback 前部——Builder 会截断
+                    feedback[:2000]，放后面会被截掉。
+                    """
+                    algo = algorithm_map.get(sp, "未确定")
+                    degrade = (
+                        "【降级重建模——原方案已失败，必须更换算法】\n"
+                        f"原算法「{algo}」生成的代码执行失败且自动修复无效。"
+                        "请放弃原算法，改用更简单、可靠、30秒内可完成的方法"
+                        "（如贪心、随机搜索、启发式规则、缩小规模的解析求解）。"
+                        "新方案必须：输出具体数值结果并写入 metrics.json，"
+                        "至少生成一张结果图表。宁可结果次优，不可无结果。\n\n"
+                        "【上次代码执行报错】\n"
+                    )
+                    return builder.run(
+                        problem_text, sp, algo,
+                        feedback=degrade + error_text,
+                        data_dir=summary.get("data_dir"),
+                    )
+
+                def _try_rebuild(err_text: str) -> None:
+                    """Builder 降级重建模并重跑；结果写回 exec_result。"""
+                    nonlocal exec_result
+                    rebuilt = _rebuild_with_fallback(err_text)
+                    if rebuilt.get("code"):
+                        res["code"] = rebuilt["code"]
+                        if rebuilt.get("math_model"):
+                            res["math_model"] = rebuilt["math_model"]
+                        exec_result = solver.run(
+                            rebuilt["code"], extra_files=extra_files,
+                            figure_dir=fig_dir, task_dir=_task_dir,
+                        )
+                        exec_result["rebuild_attempted"] = True
+                        exec_result["first_error"] = err_text
+
+                if (
+                    exec_result["status"] != "ok"
+                    and exec_result.get("last_stderr")
+                    and not exec_result.get("safety_fail")
+                ):
+                    first_error = exec_result.get("error", "") or exec_result.get("last_stderr", "")
+
+                    # Agent Loop：让 LLM 分析错误原因
+                    try:
+                        from utils.agent_loop import analyze_and_fix_code
+                        print(f"[Agent Loop] 分析错误...", end="", flush=True)
+                        analysis = analyze_and_fix_code(first_error, code, sp)
+                        if analysis["status"] == "fixed" and analysis["fixed_code"]:
+                            print(f" → LLM 生成修复代码 ({analysis['rounds']} 轮)")
+                            exec_result = solver.run(analysis["fixed_code"], extra_files=extra_files, figure_dir=fig_dir, task_dir=_task_dir)
+                            exec_result["agent_loop_fix"] = True
+                            exec_result["first_error"] = first_error
+                            if exec_result["status"] != "ok":
+                                # Agent Loop 修复后仍失败 → 降级重建模兜底
+                                # （此前此处直接放弃，修复代码失败就没有第二次机会）
+                                print(f" → 修复代码仍失败，降级重建模")
+                                _try_rebuild(first_error)
+                        else:
+                            # Agent Loop 未能修复，回退到 Builder 重试（带降级指令）
+                            print(f" → 回退到 Builder 重试（含算法降级指令）")
+                            _try_rebuild(first_error)
+                    except Exception as e:
+                        print(f" → Agent Loop 异常: {e}，回退到 Builder")
+                        _try_rebuild(first_error)
 
                 exec_result["sub_problem"] = sp
                 return exec_result
@@ -699,7 +731,8 @@ def run_pipeline(
             from concurrent.futures import ThreadPoolExecutor, as_completed
 
             exec_map: dict[int, dict] = {}
-            max_workers = int(get("writer.max_workers", 4))
+            # 求解并行度读 solver 配置（此前误用 writer.max_workers，复制粘贴笔误）
+            max_workers = int(get("solver.max_workers", 4))
             # 无代码的子问题直接标记 skipped（不进并行/串行队列，但保留记录）
             for i, (sp, res) in enumerate(zip(sub_problems, build_results), 1):
                 if not res.get("code"):
@@ -716,15 +749,33 @@ def run_pipeline(
                 if res.get("code") and _needs_prior(res.get("code", ""), i)
             ]
 
+            def _record_shared(i: int, er: dict) -> None:
+                """执行成功的结果立即写入 shared_results（数据契约链）。
+
+                必须在 dependent 子问题执行**之前**记录——此前记录放在
+                统一落盘循环里，Q4 这类依赖前序 result_N.json 的子问题
+                执行时 shared_results 还是空的，extra_files 永远为空，
+                "读 result_1.json 不存在"反复修复无效（实测 Q4 失败根因）。
+                """
+                if isinstance(er, dict) and er.get("status") == "ok":
+                    shared_results[i] = {
+                        "sub_problem": sub_problems[i - 1],
+                        "metrics_json": er.get("metrics_json", {}),
+                        "numbers": (er.get("metrics") or {}).get("numbers", {}),
+                        "key_lines": (er.get("metrics") or {}).get("key_lines", [])[:20],
+                    }
+
             with ThreadPoolExecutor(max_workers=max(1, min(max_workers, len(independent)))) as _ex:
                 _futures = {_ex.submit(_solve_one, i, sp, res): i for i, sp, res in independent}
                 for _fut in as_completed(_futures):
                     _i = _futures[_fut]
                     exec_map[_i] = _fut.result()
+                    _record_shared(_i, exec_map[_i])
 
             # 有依赖的子问题：主线程按序执行（前序 shared_results 已就绪）
             for i, sp, res in dependent:
                 exec_map[i] = _solve_one(i, sp, res)
+                _record_shared(i, exec_map[i])
 
             # ── 按子问题顺序统一落盘 ──
             for i, (sp, res) in enumerate(zip(sub_problems, build_results), 1):

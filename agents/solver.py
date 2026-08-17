@@ -388,15 +388,28 @@ class SolverAgent(BaseAgent):
         try:
             # 如果有 extra_files（数据契约链），已经注入了
             # 额外：检查当前任务目录下是否有数据文件
+            # 注意：task_dir 为空时必须跳过——Path("") 等价 Path('.')，
+            # exists() 恒为 True，rglob 会递归整个项目根（含前端 node_modules
+            # 数万文件）并逐个复制，实测直接把执行卡死
             if task_dir is None:
-                task_dir = Path(os.environ.get("MATHAGENT_TASK_DIR", ""))
-            task_dir_path = Path(task_dir)
-            if task_dir_path.exists():
+                task_dir = os.environ.get("MATHAGENT_TASK_DIR", "")
+            task_dir_path = Path(task_dir) if str(task_dir).strip() else None
+            if task_dir_path and task_dir_path.exists():
                 data_files_copied: list[Path] = []
+                # CLI 模式 task_dir 通常是 data/ 下的一级子目录（如 data/bike_data，
+                # 由 main.py 传 data_dir 兜底）：复制时保留子目录层级，与 builder
+                # 数据清单给 LLM 的路径（data/bike_data/bike_data.csv）对齐；
+                # Web 任务目录（task_xxx）不带层级——路径由归一化删 task 段对齐
+                _prefix = (
+                    task_dir_path.name
+                    if task_dir_path.parent.name == "data"
+                    and not task_dir_path.name.startswith("task_")
+                    else ""
+                )
                 for df in task_dir_path.rglob("*"):
                     if df.is_file() and df.suffix.lower() in (".csv", ".xlsx", ".txt"):
                         rel = df.relative_to(task_dir_path)
-                        dest = tmp_dir / "data" / rel
+                        dest = tmp_dir / "data" / _prefix / rel
                         dest.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(df, dest)
                         data_files_copied.append(dest)
@@ -493,16 +506,40 @@ matplotlib.rcParams['axes.unicode_minus'] = False
                 "无法读取", "读取失败", "数据为空", "没有数据",
             ]
             _stdout_is_error = any(pat in (result.stdout or "") for pat in _error_patterns)
-            # returncode=0 且 metrics_json 为空 → 可能是"空跑"成功（无实际计算）
-            _empty_success = result.returncode == 0 and not metrics_json and not figures
-            _effective_success = result.returncode == 0 and not _stdout_is_error
+            # returncode=0 且无任何产出（metrics/图/stdout数值全无）→ "空跑"成功
+            _has_numbers = bool(_extract_metrics(result.stdout or "").get("numbers"))
+            _empty_success = (
+                result.returncode == 0
+                and not metrics_json and not figures and not _has_numbers
+            )
+            _effective_success = (
+                result.returncode == 0 and not _stdout_is_error and not _empty_success
+            )
 
             if not _effective_success and result.returncode == 0:
-                # 代码"假装成功"：returncode=0 但实际无有效产出
-                # 将错误信息注入 stderr 让后续 Agent Loop 能修复
-                _fake_error = f"代码执行看似成功但实际无有效产出: stdout含错误模式或metrics.json为空"
+                # 代码"假装成功"：returncode=0 但实际无有效产出。
+                # 错误信息必须附带 stdout 中实际出错的行——只给一句
+                # "无有效产出"时修复 LLM 拿不到任何线索，整条修复链都会盲修
+                # （实测：Q4 修复3轮全失败，last_stderr 只有笼统描述）
+                _err_lines = [
+                    l.strip() for l in (result.stdout or "").splitlines()
+                    if any(pat in l for pat in _error_patterns)
+                ][:5]
+                _fake_parts = ["代码执行看似成功（returncode=0）但实际无有效产出"]
+                if _err_lines:
+                    _fake_parts.append("stdout 中的错误行（修复时优先排查这些位置）:")
+                    _fake_parts.extend(f"  {l}" for l in _err_lines)
+                if _empty_success:
+                    _fake_parts.append(
+                        "metrics.json 为空且无图表、无数值输出——代码未做实际计算，"
+                        "或计算结果未落盘。请确保：核心指标写入 metrics.json，"
+                        "并至少生成一张结果图表"
+                    )
+                _fake_error = "\n".join(_fake_parts)
                 result.stderr = (result.stderr + "\n" + _fake_error).strip() if result.stderr else _fake_error
-                self.logger.warning(f"代码假装成功: stdout含错误模式={_stdout_is_error}, metrics_json为空={not metrics_json}")
+                self.logger.warning(
+                    f"代码假装成功: stdout含错误模式={_stdout_is_error}, 空跑={_empty_success}"
+                )
 
             return {
                 "success": _effective_success,
@@ -690,7 +727,7 @@ matplotlib.rcParams['axes.unicode_minus'] = False
         return {
             "status": "error",
             "code": current_code,
-            "error": f"经过{max_retries}次修复仍无法执行",
+            "error": f"代码执行失败（已尝试{attempt}次执行、自动修复{max(0, attempt - 1)}轮）",
             "last_stderr": last_stderr,
             "safety_fail": False,
         }

@@ -79,6 +79,28 @@ class LogicAuditor:
                 "severity": "中",
                 "section": "数值结果",
             })
+        # 子问题失败检查：执行失败的子问题对应章节无真实数值支撑。
+        # 存在性正则查不出这类"结构齐全但结果缺失"的论文（实测 Q4 失败
+        # 时逻辑分 8.89 照常通过门控）——失败的求解无法靠重写论文修复，
+        # 必须列为高严重度问题提示人工重跑求解
+        execs = summary.get("executions") or []
+        failed = [
+            e for e in execs
+            if isinstance(e, dict) and e.get("status") == "error"
+        ]
+        if failed:
+            names = "；".join(
+                (e.get("sub_problem", "") or "")[:20] for e in failed
+            )
+            issues.append({
+                "problem": (
+                    f"{len(failed)}/{len(execs)} 个子问题执行失败（{names}），"
+                    "对应章节无真实数值支撑。此问题无法通过论文重写修复，"
+                    "需人工检查失败原因（依赖缺失/数据契约/模型规模）后重跑求解"
+                ),
+                "severity": "高",
+                "section": "全文",
+            })
         score = _clamp10((len(self.CHECKS) - len(issues)) / len(self.CHECKS) * 10)
         return {
             "score": score,

@@ -92,6 +92,7 @@ mathagent/
 ```bash
 python tests/test_run.py            # 端到端冒烟（拆题+算法）
 python tests/test_full_pipeline.py  # 全流程测试
+python tests/test_fix_20260817.py   # 论文硬伤修复回归测试（29 项断言）
 ```
 
 ## 📌 已知边界
@@ -99,7 +100,9 @@ python tests/test_full_pipeline.py  # 全流程测试
 - 物理仿真/规则清晰类题目效果最佳（如 2025 国赛 A 题烟幕干扰弹）
 - 依赖数据质量；无真值子问题建议开启 HIL 人工确认
 - 论文质量门控不通过时最多重写 8 轮，仍不通过会标注失败状态供人工复核
+- **赛题文件必须为 UTF-8 编码**——GBK 上传会导致全文乱码（实测：乱码赛题会让
+  LLM 依据零碎关键词脑补题目背景，论文数值全部失真）。Web 上传前请确认编码
 
 ## 🛠 技术栈
 
-Python · FastAPI · Next.js · Streamlit（已移除） · MiMo LLM API · Typst
+Python · FastAPI · Next.js · MiMo LLM API · Typst · matplotlib

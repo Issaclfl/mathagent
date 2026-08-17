@@ -175,13 +175,15 @@ class ModelerAgent(BaseAgent):
         for sp in sub_problems:
             prior = algorithm_prior(sp, sorted(pool))
             if prior:
-                ptype = _classify(sp)
-                if ptype in seen_types:
+                # 注意用局部变量 sp_type——此前直接复用 ptype 会覆盖上方
+                # classify_problem 的题型判定，导致后续白名单日志错乱
+                sp_type = _classify(sp)
+                if sp_type in seen_types:
                     continue
-                seen_types.add(ptype)
+                seen_types.add(sp_type)
                 top = prior[0]
                 prior_lines.append(
-                    f"- 同类任务「{ptype}」历史成功率最高: {top['algorithm']} "
+                    f"- 同类任务「{sp_type}」历史成功率最高: {top['algorithm']} "
                     f"({top['success_rate']*100:.0f}%, 样本{top['samples']}次)"
                 )
         if prior_lines:
