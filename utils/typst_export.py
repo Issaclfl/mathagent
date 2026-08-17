@@ -196,7 +196,7 @@ def _math_convert(text: str) -> str:
         r"\forall": "forall", r"\exists": "exists", r"\infty": "oo",
         r"\nabla": "gradient", r"\partial": "diff", r"\sim": "~",
         r"\approx": "approx", r"\propto": "prop", r"\dots": "dots",
-        r"\ldots": "dots", r"\emptyset": "empty", r"\varnothing": "empty",
+        r"\ldots": "dots", r"\emptyset": "∅", r"\varnothing": "∅",
         r"\hat": "hat", r"\bar": "overline", r"\tilde": "tilde",
         r"\vec": "arrow", r"\sqrt": "sqrt", r"\exp": "exp",
         r"\log": "log", r"\ln": "ln", r"\sin": "sin", r"\cos": "cos",
@@ -243,6 +243,9 @@ def _math_convert(text: str) -> str:
     #    必须早于 6b2 兜底删命令——否则 \circ 被删掉只剩 "0^"，
     #    Typst 空上标直接报错（实测 $0^\circ$ → $0^$）
     text = re.sub(r"\^?\\circ\b", "°", text)
+    # 6b1.6. 空上标星号：x^* / x\^* → x^("*")（LaTeX 最优解标记；
+    #    ^* 在 Typst 是空上标直接报错，实测 $\theta^*$ 编译失败）
+    text = re.sub(r"\^\\?\*", r'^("*")', text)
     # 6b2. 兜底：未映射的 LaTeX 命令删除命令、保留花括号内容
     #    （\boldsymbol{theta} → theta；\mathbf{x} → x）；
     #    迭代处理嵌套命令参数（\hat{\boldsymbol{theta}} → theta）。
@@ -334,6 +337,10 @@ def _math_convert(text: str) -> str:
     text = re.sub(r"[A-Za-z]{2,}", _quote_var, text)
     for _qi, _q in enumerate(_quoted):
         text = text.replace(f"\x00{_qi}\x00", _q)
+    # 6c2. 多字母+数字后缀标识符（M1/FY1 形式）：typst 数学把 M1 当
+    #    未定义变量直接报错（实测 unknown variable: M1）→ 引号化为文本 "M1"
+    #    前导断言排除已引号化内容（"FY"1 / _("d1") 不二次处理）
+    text = re.sub(r"(?<![A-Za-z0-9_\"])[A-Za-z]{1,}[0-9]+", r'"\g<0>"', text)
     # 7. \tag{n} 删除（公式编号由正文结构提供）
     text = re.sub(r"\\tag\{[^{}]*\}", "", text)
     # 裸上下标后紧跟字母时加空格：x^That → x^T hat（防 Typst 连写解析为单变量）
@@ -346,6 +353,15 @@ def _math_convert(text: str) -> str:
 
 def _inline(text: str) -> str:
     """行内标记转换：加粗/斜体/行内公式/特殊字符。"""
+    # 0. 摘出行内数学段（$...$ / \(...\)）——星号/强调规则不污染公式内容。
+    #    实测：$\theta^*, v^*$ 的星号会被下方斜体规则吞成 theta^_、v^_
+    math_segs: list[str] = []
+    def _stash_math(m: re.Match) -> str:
+        math_segs.append(m.group(0))
+        return f"\x00M{len(math_segs)-1}\x00"
+    text = re.sub(r"\$[^$\n]+?\$", _stash_math, text)
+    text = re.sub(r"\\\([^\\\n]+?\\\)", _stash_math, text)
+
     # 加粗保护（避免被斜体规则二次处理）
     text = re.sub(r"\*\*(.+?)\*\*", lambda m: "\x00B" + m.group(1) + "\x00B", text)
     # 斜体 *it* → _it_
@@ -353,12 +369,15 @@ def _inline(text: str) -> str:
     # 剩余星号（残缺 Markdown，如 *Dijkstra/A**）转义为字面量
     text = re.sub(r"\*", r"\\*", text)
     text = text.replace("\x00B", "*")  # 恢复加粗 → *b*（Typst 原生加粗）
-    # \(x\) → $x$（LaTeX 数学转 Typst；内容可含 ) 等字符）
-    def _math_inline(m):
-        return "$" + _math_convert(m.group(1)) + "$"
-    text = re.sub(r"\\\((.+?)\\\)", _math_inline, text)
-    # $x$ 行内公式（MathJax 风格，LLM 常用）同样转换
-    text = re.sub(r"\$([^$\n]+?)\$", lambda m: "$" + _math_convert(m.group(1)) + "$", text)
+
+    # 还原数学段并做 LaTeX→Typst 转换
+    def _restore_math(m: re.Match) -> str:
+        seg = math_segs[int(m.group(1))]
+        if seg.startswith("\\("):
+            return "$" + _math_convert(seg[2:-2]) + "$"
+        return "$" + _math_convert(seg[1:-1]) + "$"
+    text = re.sub(r"\x00M(\d+)\x00", _restore_math, text)
+
     # 文本中的 LaTeX 下标/上标残留：LLM 常在正文写 t_{d(i+1)} / 5^3，
     # Typst 文本模式 { } 有分组语义、_ / ^ 触发数学上下标，直接编译报错。
     # 转义为字面量：t_{d(i+1)} → t\_(d(i+1))，^ 同理
@@ -603,8 +622,11 @@ def md_to_typst(md: str) -> str:
                 hashes = len(stripped.split()[0])
                 title = stripped[hashes:].strip()
                 line = '=' * hashes + ' ' + title
-        # 检测行内残留的 LaTeX 命令
-        if '\\' in stripped and not stripped.startswith('//') and not stripped.startswith('#'):
+        # 检测行内残留的 LaTeX 命令。
+        # 只匹配 \ 后跟字母的命令（\text/\frac 等）——此前条件是"含 \ 就整行
+        # 数学化"，把文本行里的转义符号（t\_(d1) 的 \_）也触发，导致整行
+        # 文本被 _math_convert 引号化（max → "max"），实测污染问题分析章节
+        if re.search(r"\\[a-zA-Z]+", stripped) and not stripped.startswith('//') and not stripped.startswith('#'):
             line = _math_convert(line)
         result_lines.append(line)
     # 第2步：修复 $ <eqN> 模式（收集下一行公式内容合并为单行）
