@@ -217,7 +217,7 @@ def _math_convert(text: str) -> str:
         r"\cdot": " dot ", r"\times": " times ", r"\pm": " plus.minus ",
         r"\in": " in ", r"\notin": " not.in ", r"\subset": " subset ",
         r"\to": " -> ", r"\rightarrow": " -> ", r"\Rightarrow": " => ",
-        r"\cup": " union ", r"\cap": " sect ",
+        r"\cup": " union ", r"\cap": " sect ", r"\bigcup": " union ", r"\bigcap": " sect ",
         r"\le": " <= ", r"\ge": " >= ", r"\ne": " != ", r"\neq": " != ",
     }
     text = text.replace(r"\|", "|")  # 范数 \|x\| → |x|
@@ -228,7 +228,8 @@ def _math_convert(text: str) -> str:
         # 成 \boldsymboltheta 被兜底整体误删
         text = text.replace(k, " " + v)
     # 6b1b. % 在 Typst math 模式是注释符 → 需要引号化
-    text = re.sub(r'(?<!")%(?!")', '"%"', text)
+    #   已转义的 \%（LaTeX 百分号）保留——typst 数学里 \% 是合法转义
+    text = re.sub(r'(?<![\\"])%(?!")', '"%"', text)
     # 6b1c. Typst 保留字引号化（lambda/max/min 等在 math 模式需要引号）
     _RESERVED = {"lambda", "max", "min", "sin", "cos", "tan", "log", "ln", "exp",
                  "sum", "product", "integral", "inf", "sup", "lim", "mod"}
@@ -238,6 +239,10 @@ def _math_convert(text: str) -> str:
     text = re.sub(r'\b([a-zA-Z]+)\b', _quote_reserved, text)
     # 6b1d. 清理前导空格（$ sigma$ → $sigma$）
     text = text.strip()
+    # 6b1.5. 角度符号：^\circ / \circ → °
+    #    必须早于 6b2 兜底删命令——否则 \circ 被删掉只剩 "0^"，
+    #    Typst 空上标直接报错（实测 $0^\circ$ → $0^$）
+    text = re.sub(r"\^?\\circ\b", "°", text)
     # 6b2. 兜底：未映射的 LaTeX 命令删除命令、保留花括号内容
     #    （\boldsymbol{theta} → theta；\mathbf{x} → x）；
     #    迭代处理嵌套命令参数（\hat{\boldsymbol{theta}} → theta）。
@@ -255,6 +260,16 @@ def _math_convert(text: str) -> str:
     # 6b3. 裸上标/下标花括号多字母引号化：^{delivered} → ^("delivered")。
     #    在兜底删命令之后执行（^{\top} 先删 \ 变 ^{top} 再引号化，避免 \ 残留）；
     #    含引号的组跳过（f_{"inf"} 来自 \text 转换，二次引号化会错乱）。
+    #    但已引号化的组必须先剥花括号：_{"cov"} → _("cov")——否则 Typst 报
+    #    unexpected underscore（_{ 不是合法语法，实测 t_{\text{cov}} 转换后残留）
+    text = re.sub(r"\_\{(\"[^\"]*\")\}", r"_(\1)", text)
+    text = re.sub(r"\^\{(\"[^\"]*\")\}", r"^(\1)", text)
+    # 逗号混合组：_{"start",k} → _("start", k)（Typst 多下标语法，剥花括号）
+    text = re.sub(r"\_\{(\"[^\"]*\")\s*,\s*([^{}]*)\}", r"_(\1, \2)", text)
+    text = re.sub(r"\^\{(\"[^\"]*\")\s*,\s*([^{}]*)\}", r"^(\1, \2)", text)
+    # 数学模式：_ / ^ 前多余空格删除（LaTeX 命令删除后遗留的空格会让 Typst
+    # 把前缀下标/上标当文本解析，报 unexpected underscore）
+    text = re.sub(r"\s+([_^])", r"\1", text)
     _SUP_PAT = "\\^\\{([^{}\\\"']*)\\}"
     _SUB_PAT = "\\_\\{([^{}\\\"']*)\\}"
 
@@ -295,7 +310,8 @@ def _math_convert(text: str) -> str:
     #     delivered → "delivered"；内置词（alpha/sum/hat 等）保留
     _TYPST_WORDS = (
         set(_MAP.values()) | set(_BINOP.values())
-        | {"sum", "product", "integral", "max", "min", "d", "e", "op", "bb", "cal"}
+        | {"sum", "product", "integral", "max", "min", "d", "e", "op", "bb", "cal",
+           "plus", "minus", "dot", "times"}  # plus.minus 等符号词的分段（\pm 映射）
         # Typst 标记/表格/图片关键字（不应被引号化）
         | {"align", "center", "table", "stroke", "none", "inset", "columns",
            "hline", "figure", "image", "caption", "kind", "type", "width", "height",
@@ -343,6 +359,11 @@ def _inline(text: str) -> str:
     text = re.sub(r"\\\((.+?)\\\)", _math_inline, text)
     # $x$ 行内公式（MathJax 风格，LLM 常用）同样转换
     text = re.sub(r"\$([^$\n]+?)\$", lambda m: "$" + _math_convert(m.group(1)) + "$", text)
+    # 文本中的 LaTeX 下标/上标残留：LLM 常在正文写 t_{d(i+1)} / 5^3，
+    # Typst 文本模式 { } 有分组语义、_ / ^ 触发数学上下标，直接编译报错。
+    # 转义为字面量：t_{d(i+1)} → t\_(d(i+1))，^ 同理
+    text = re.sub(r"_\{([^{}]+)\}", r"\\_(\1)", text)
+    text = re.sub(r"\^\{([^{}]+)\}", r"\\^(\1)", text)
     # 文本模式转义：< 是 Typst label 语法（涉水深度<30cm 会报 unclosed label）。
     # 跳过 $...$ 公式段（数学模式 < 是关系符，转义会报错）
     parts = re.split(r"(\$[^$]*\$)", text)
@@ -496,15 +517,17 @@ def md_to_typst(md: str) -> str:
             i += 1
             continue
 
-        # 列表：- item 保留；N. item → 显式编号文本。
+        # 列表：- item 保留；N. item → 显式编号文本；* item → -（LLM 常用
+        # 星号做无序列表项，Typst 里 * 是强调标记，不转会 unclosed delimiter）
         # 注意：Typst 的 `+` 有序列表遇空行会被拆成多个独立列表、编号重置为 1
         # （模型假设 8 项全变 "1."）。因此数字列表直接输出源数字文本（md 源编号连续）。
-        m = re.match(r"^(\s*)(-|\d+\.)\s+(.*)$", line)
+        m = re.match(r"^(\s*)(-|\*|\d+\.)\s+(.*)$", line)
         if m:
-            if m.group(2) == "-":
+            marker = "-" if m.group(2) in ("-", "*") else m.group(2)
+            if marker == "-":
                 out.append(f"{m.group(1)}- {_inline(m.group(3))}")
             else:
-                out.append(f"{m.group(1)}{m.group(2)} {_inline(m.group(3))}")
+                out.append(f"{m.group(1)}{marker} {_inline(m.group(3))}")
             i += 1
             continue
 
