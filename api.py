@@ -6,7 +6,7 @@ import uuid
 import threading
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -15,6 +15,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 
 from main import run_pipeline
+from utils.auth import make_token, verify_token, check_password
 
 app = FastAPI(title="MathModelAgent API")
 app.add_middleware(
@@ -23,6 +24,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── 鉴权中间件：除登录/健康检查外，所有 /api/* 需携带有效 token ──
+# 公网部署必需（防白嫖 LLM API 额度）；本地开发未配 AUTH_PASSWORD 时
+# 登录端点拒绝一切，但中间件仍放行（本地无鉴权，兼容现有用法）。
+@app.middleware("http")
+async def _auth_middleware(request: Request, call_next):
+    path = request.url.path
+    # 放行：登录/健康检查（无鉴权能力时本地照常使用）
+    if path in ("/api/login", "/api/health") or not path.startswith("/api/"):
+        return await call_next(request)
+    # 有登录密码配置 → 强制鉴权；未配置 → 本地模式放行
+    if not __import__("os").environ.get("AUTH_PASSWORD"):
+        return await call_next(request)
+    token = None
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        token = auth[7:]
+    if not token:
+        token = request.query_params.get("token")  # 下载链接等 <a href> 场景
+    if not token or not verify_token(token):
+        return JSONResponse({"error": "未授权，请先登录"}, status_code=401)
+    return await call_next(request)
 
 DATA_DIR = Path(__file__).parent / "data"
 RESULTS_DIR = DATA_DIR / "results"
@@ -56,6 +79,18 @@ _cleanup_stale_tasks()
 
 
 # ── 请求模型 ──────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    password: str
+
+
+@app.post("/api/login")
+def login(req: LoginRequest):
+    """密码登录，签发 7 天有效 token。"""
+    if not check_password(req.password):
+        return JSONResponse({"error": "密码错误"}, status_code=401)
+    return {"status": "ok", "token": make_token()}
+
 
 class ModelingRequest(BaseModel):
     problem: str

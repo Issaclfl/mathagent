@@ -1,0 +1,29 @@
+# ModAgent 后端镜像排除项
+.git
+.gitignore
+__pycache__
+*.pyc
+.env
+.env.*
+!deploy/.env.example
+
+# 运行产物（volume 挂载，不进镜像）
+data/results/
+data/task_*/
+data/tmp_exec/
+data/hil/
+data/*.log
+data/experience.json
+
+# 前端（独立镜像构建）
+frontend/node_modules/
+frontend/.next/
+
+# 日志与临时
+*.log
+verify_run.log
+api_stdout.log
+temp_output/
+tools/
+tests/
+scripts/

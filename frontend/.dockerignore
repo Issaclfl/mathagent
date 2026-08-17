@@ -1,0 +1,5 @@
+# ModAgent 前端镜像排除项
+node_modules
+.next
+out
+Dockerfile

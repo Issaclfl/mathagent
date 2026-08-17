@@ -5,7 +5,30 @@ import Link from "next/link";
 
 type Stage = "idle" | "running" | "done" | "error";
 
-const API_BASE = "http://localhost:8000";
+// 同域相对路径：生产由 nginx 反代 /api → 后端；本地开发走 Next.js rewrites
+const API_BASE = "";
+
+// ── 鉴权：token 管理（公网部署必需，防白嫖 LLM API）────────
+const TOKEN_KEY = "ma_token";
+
+function getToken(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(TOKEN_KEY) || "";
+}
+
+/** 带 token 的 fetch：401 时清除 token 并跳登录页 */
+async function authFetch(url: string, opts: RequestInit = {}) {
+  const headers = new Headers(opts.headers);
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const r = await fetch(url, { ...opts, headers });
+  if (r.status === 401) {
+    localStorage.removeItem(TOKEN_KEY);
+    window.location.href = "/login";
+    throw new Error("登录已过期，请重新登录");
+  }
+  return r;
+}
 
 // ── 示例赛题 ──────────────────────────────────────────────
 const EXAMPLES: { name: string; text: string }[] = [
@@ -101,6 +124,11 @@ export default function Workspace() {
   const [dataFiles, setDataFiles] = useState<File[]>([]);
 
   useEffect(() => {
+    // 未登录跳登录页（公网部署时后端会拒绝无 token 请求）
+    if (!getToken()) {
+      window.location.href = "/login";
+      return;
+    }
     setHistory(loadHistory());
   }, []);
 
@@ -108,7 +136,7 @@ export default function Workspace() {
   const pollStatus = useCallback(async (id: string) => {
     const poll = setInterval(async () => {
       try {
-        const r = await fetch(`${API_BASE}/api/status/${id}`);
+        const r = await authFetch(`${API_BASE}/api/status/${id}`);
         const s = await r.json();
         if (s.status === "done") {
           clearInterval(poll);
@@ -167,9 +195,9 @@ export default function Workspace() {
         if (problemFile) fd.append("problem_file", problemFile);
         if (!problemFile) fd.append("extra_problem_text", text);
         dataFiles.forEach(f => fd.append("data_files", f));
-        res = await fetch(`${API_BASE}/api/modeling-files`, { method: "POST", body: fd });
+        res = await authFetch(`${API_BASE}/api/modeling-files`, { method: "POST", body: fd });
       } else {
-        res = await fetch(`${API_BASE}/api/modeling`, {
+        res = await authFetch(`${API_BASE}/api/modeling`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ problem: text }),
@@ -205,7 +233,7 @@ export default function Workspace() {
   const handleStop = async () => {
     if (taskId) {
       try {
-        await fetch(`${API_BASE}/api/stop/${taskId}`, { method: "POST" });
+        await authFetch(`${API_BASE}/api/stop/${taskId}`, { method: "POST" });
         setLogs(p => [...p, "⏹ 已发送停止请求"]);
       } catch { /* ignore */ }
     }
@@ -324,7 +352,7 @@ export default function Workspace() {
                 <div className="text-xs text-gray-500">成功执行</div>
               </div>
               <div className="text-center p-3 bg-gray-50 rounded-xl flex items-center justify-center">
-                <a href={`${API_BASE}/api/download/${result.task_id}`}
+                <a href={`${API_BASE}/api/download/${result.task_id}?token=${getToken()}`}
                   className="text-sm font-medium text-blue-600 hover:underline">⬇️ 下载论文</a>
               </div>
             </div>
@@ -371,7 +399,7 @@ export default function Workspace() {
                     查看
                   </button>
                   {item.status === "done" && (
-                    <a href={`${API_BASE}/api/download/${item.task_id}`}
+                    <a href={`${API_BASE}/api/download/${item.task_id}?token=${getToken()}`}
                       className="px-2.5 py-1 rounded-full border border-gray-200 text-xs text-blue-600 hover:border-blue-400 transition">
                       下载
                     </a>

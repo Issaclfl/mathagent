@@ -1,0 +1,19 @@
+# ModAgent 后端（FastAPI）
+FROM python:3.11-slim
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# 依赖（清华源加速国内构建）
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+COPY . .
+
+# 数据目录（挂载 volume 持久化运行产物与经验库）
+RUN mkdir -p /app/data
+
+EXPOSE 8000
+CMD ["python", "api.py"]
