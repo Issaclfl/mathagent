@@ -17,7 +17,7 @@ RESULTS_DIR = Path(__file__).parent.parent / "data" / "results"
 
 # ── 论文各节的 LLM System Prompt ───────────────────────────────
 
-from agents.paper_guide import FULL_GUIDE, ABSTRACT_GUIDE, MODEL_SECTION_GUIDE, SENSITIVITY_GUIDE, EVALUATION_GUIDE
+from agents.paper_guide import FULL_GUIDE, ABSTRACT_GUIDE, MODEL_SECTION_GUIDE, SENSITIVITY_GUIDE, EVALUATION_GUIDE, ANALYSIS_GUIDE
 
 SYSTEM_PROMPT = "你是一位资深的数学建模竞赛论文写作专家，精通学术写作和获奖论文结构。\n\n" + FULL_GUIDE + """
 
@@ -63,8 +63,9 @@ PROMPT_ABSTRACT = """\
    - 若某指标不存在或执行失败，该处写"—"或省略，**严禁**写"[请填入...]"等占位符
    - **严禁**凭经验或算法原理编造任何具体数字
 3. 涵盖：问题背景、方法选择、关键结果、主要结论
-4. 语言精炼、学术规范
-5. 只返回摘要正文，不要标题和额外说明
+4. 最后单独一行输出关键词：3-5个，按重要性降序，格式"关键词：XXX、XXX、XXX"
+5. 语言精炼、学术规范
+6. 只返回摘要正文（含关键词行），不要标题和额外说明
 
 {abstract_guide}"""
 
@@ -97,13 +98,17 @@ PROMPT_PROBLEM_ANALYSIS = """\
 {exec_status}
 
 要求：
-1. 每个子问题分析其数学本质和求解思路
-2. **【一致性铁律】**方法描述必须与"实际模型摘要"严格一致：摘要用监督分类
+1. 先写一段总述（本题学科分类与数学本质），再列 3-5 个核心难点（难点|原因|解决思路），
+   然后用一段说明总体技术路线，最后逐题分析
+2. 每个子问题分析其数学本质和求解思路，并说明各子问题之间的递进关系
+3. **【一致性铁律】**方法描述必须与"实际模型摘要"严格一致：摘要用监督分类
    就写监督分类；严禁引入摘要中不存在的方法（如摘要为 MLP 分类，不得写
    自编码器/聚类/无监督学习）。执行失败的子问题，分析结尾注明该部分
    因规模/求解困难降级处理，与后文保持一致
-3. 每个子问题用二级标题，**不要输出章节大标题**（如"二、问题分析"由系统统一添加）
-4. 使用 Markdown 格式"""
+4. 每个子问题用二级标题，**不要输出章节大标题**（如"二、问题分析"由系统统一添加）
+5. 使用 Markdown 格式
+
+{analysis_guide}"""
 
 PROMPT_ASSUMPTIONS = """\
 请为以下数学建模问题列出合理的模型假设。
@@ -118,7 +123,9 @@ PROMPT_ASSUMPTIONS = """\
 1. 列出 5-8 条假设
 2. 每条假设需说明合理性
 3. 假设之间不能自相矛盾（例如：不能同时假设"现有站点能代表整体"和"需要减少站点"）
-4. 只返回假设列表，编号用 1, 2, 3..."""
+4. **已知的题目条件不属于假设**（如题目给出的速度、半径、持续时间等是已知量，不列入假设；
+   假设只包含你主动简化/忽略的部分，如"忽略空气阻力""假设风速为0"）
+5. 只返回假设列表，编号用 1, 2, 3..."""
 
 PROMPT_SYMBOLS = """\
 请为以下数学建模问题设计符号说明表。
@@ -133,9 +140,12 @@ PROMPT_SYMBOLS = """\
 要求：
 1. 只列出实际模型公式中**实际会出现**的符号，不要列出未引用的符号；
    同一概念全文只用一个符号（如需求量统一记为某一符号，不得各章各用一套）
-2. 使用 Markdown 表格格式：| 符号 | 含义 | 单位 |
-3. 按模型模块分组（如"基础数据"、"评价模型"、"预测模型"等）
-4. 符号数量控制在 20-30 个，精简为主"""
+2. 符号按出现逻辑顺序排列：先全局常量 → 再决策变量 → 再中间变量 → 最后结果量
+3. 数学符号使用 LaTeX 格式：变量用斜体（如 $t_d$），常量用正体（如 $g$）
+4. 使用 Markdown 表格格式：| 符号 | 含义 | 单位 |
+5. 按模型模块分组（如"基础数据"、"评价模型"、"预测模型"等）
+6. 单位缺失的条目标注"—"或"无量纲"
+7. 符号数量控制在 20-30 个，精简为主"""
 
 PROMPT_MODEL_SECTION = """\
 请为以下子问题撰写"模型建立与求解"章节。
@@ -224,8 +234,8 @@ PROMPT_REFERENCES = """\
 要求：
 1. 列出 8-12 条参考文献
 2. 包括教材、期刊论文、经典著作
-3. 严格采用 GB/T 7714-2015 格式
-4. 中英文文献混合
+3. 严格采用 GB/T 7714-2015 格式，文献类型标识：[J]期刊、[M]专著、[C]会议
+4. 中英文文献混合，**中文文献在前、英文文献在后**，各自按正文引用顺序排列
 5. 只返回参考文献列表"""
 
 
@@ -343,6 +353,7 @@ class WriterAgent(BaseAgent):
                 sub_algorithms=algo_lines,
                 model_digests=model_digests,
                 exec_status=exec_status,
+                analysis_guide=ANALYSIS_GUIDE,
             ) + _fb_block("问题分析"),
             "assumptions": PROMPT_ASSUMPTIONS.format(
                 problem_text=problem_text[:1200],
@@ -485,6 +496,11 @@ class WriterAgent(BaseAgent):
         # 删除本地路径、占位符、元评论等泄漏（防止 LLM 不遵守 prompt 时污染论文）
         paper = self._sanitize_paper(paper)
 
+        # 后处理：独立公式统一连续编号 (1),(2),...（确定性规则引擎；
+        # LLM 手写式号不可靠且与文末编号对不上，全部由系统统一分配。
+        # Typst 转换器识别 \tag{n} 启用自动编号）
+        paper = self._number_formulas(paper)
+
         # 后处理：[[稳定键]] 引用替换为文末参考文献实际编号
         paper = self._link_citations(paper, references)
 
@@ -557,6 +573,49 @@ class WriterAgent(BaseAgent):
         except Exception as e:
             self.logger.warning(f"赛题文件读取失败，降级为空文本: {e}")
             return ""
+
+    @staticmethod
+    def _number_formulas(paper: str) -> str:
+        """独立公式（$$...$$ 块）统一连续编号 (1),(2),...（确定性，零 LLM 调用）。
+
+        规则：
+        - **清除 LLM 手写的所有 \\tag{n}**（各章节 LLM 独立生成会各自从 1 编号，
+          与系统编号冲突——实测灵敏度章节手写 tag{1..5} 与模型章节系统编号并存），
+          全部由系统按出现顺序统一重编号
+        - 代码围栏（``` 块）内的 $$ 不参与编号（保护示例代码）
+        - 多行块编号追加到内容末尾：$$\\na=b\\n$$ → $$\\na=b \\tag{1}\\n$$
+        - 单行块：$$a=b$$ → $$a=b \\tag{1}$$
+        编号格式 \\tag{n} 兼容 Typst 转换器（识别 tag 启用自动编号）。
+        """
+        import re
+
+        # 先把代码围栏整体摘出（占位），防止围栏内 $$ 误编号
+        fences: list[str] = []
+        def _stash(m: re.Match) -> str:
+            fences.append(m.group(0))
+            return f"@@FENCE{len(fences)-1}@@"
+        paper = re.sub(r"```.*?```", _stash, paper, flags=re.DOTALL)
+
+        counter = [0]
+        def _repl(m: re.Match) -> str:
+            content = m.group(1)
+            # 清除 LLM 手写 tag（可能嵌在公式内或单独成行）
+            content = re.sub(r"\s*\\tag\{[^{}]*\}", "", content)
+            counter[0] += 1
+            stripped = content.rstrip()
+            if "\n" in content:
+                return "$$" + stripped + f" \\tag{{{counter[0]}}}\n$$"
+            return "$$" + stripped + f" \\tag{{{counter[0]}}}$$"
+
+        paper = re.sub(r"\$\$(.*?)\$\$", _repl, paper, flags=re.DOTALL)
+
+        # 还原代码围栏
+        def _restore(m: re.Match) -> str:
+            idx = int(m.group(1))
+            return fences[idx] if idx < len(fences) else m.group(0)
+        paper = re.sub(r"@@FENCE(\d+)@@", _restore, paper)
+
+        return paper
 
     @staticmethod
     def _build_model_digests(sub_problems: list[str], models: list[dict]) -> str:

@@ -276,6 +276,27 @@ check("模型摘要含实际方法", "MLP监督分类" in dg)
 check("无模型时标注（无）", "（无）" in dg)
 check("执行状态区分成功/失败", "执行成功" in st and "执行失败" in st)
 
+# ── 7. _number_formulas ─────────────────────────────────────
+print("== _number_formulas ==")
+f1 = W._number_formulas(
+    "模型如下：\n\n$$\n\\min f(x) = x^2\n$$\n\n以及\n\n$$g(x) = \\sin x$$\n\n手写编号 $$h(x) \\tag{3}$$"
+)
+check("跨行公式编号 (1)", "\\tag{1}" in f1 and "\\min f(x) = x^2 \\tag{1}" in f1, f1)
+check("单行公式编号 (2)", "g(x) = \\sin x \\tag{2}$$" in f1)
+check("手写 \\tag 被清除并重编号 (3)", "\\tag{3}" in f1 and "h(x) \\tag{3}" in f1, f1)
+check("编号总数正确", f1.count("\\tag{") == 3, f1)
+f2 = W._number_formulas("```python\nx = 1  # $$ not math\nprint('$$$$')\n```\n\n$$a = b$$\n")
+check("代码围栏内 $$ 不编号", f2.count("\\tag{") == 1, f2)
+check("围栏内容还原", "print('$$$$')" in f2)
+# 手写 tag 单独成行的跨行块（实测灵敏度章节形态）
+f3 = W._number_formulas("$$\nx = y\n\\tag{7}\n$$\n\n$$p = q$$\n")
+check("单独成行手写 tag 被清除重编号", "x = y \\tag{1}" in f3 and "p = q \\tag{2}" in f3, f3)
+
+# ── 8. 摘要关键词（prompt 静态检查）──────────────────────────
+print("== 摘要关键词 prompt ==")
+from agents.writer import PROMPT_ABSTRACT
+check("摘要 prompt 含关键词要求", "关键词" in PROMPT_ABSTRACT and "3-5" in PROMPT_ABSTRACT)
+
 # ── 汇总 ──────────────────────────────────────────────────────
 print(f"\n{'='*50}\n结果: {len(PASS)} 通过, {len(FAIL)} 失败")
 if FAIL:
