@@ -314,6 +314,7 @@ class BuilderAgent(BaseAgent):
         feedback: str | None = None,
         data_dir: str | Path | None = None,
         gate_decisions: str = "",
+        structure_hints: str = "",
     ) -> dict:
         """为单个子问题建立模型并生成代码。
 
@@ -325,6 +326,8 @@ class BuilderAgent(BaseAgent):
                       用于指导重新建模/修正代码。
             data_dir: 当前赛题数据目录（数据清单只列该目录，防跨赛题读取）。
             gate_decisions: 人工策略决定文本（来自策略门控），注入提示词必须遵守。
+            structure_hints: 问题结构诊断红线（维度/组合/可解析化），
+                      建模与代码必须遵守（防默认走网格搜索等次优方向）。
         """
         if not sub_problem or not algorithm or algorithm == "未确定":
             return {
@@ -344,6 +347,8 @@ class BuilderAgent(BaseAgent):
             algorithm=_safe_format(algorithm),
             data_files=_safe_format(list_data_files(data_dir)) or "（无）",
         )
+        if structure_hints:
+            prompt += "\n\n" + _safe_format(structure_hints)
         if gate_decisions:
             prompt += "\n\n" + _safe_format(gate_decisions)
         if feedback:
@@ -437,13 +442,27 @@ class BuilderAgent(BaseAgent):
         max_workers: int = 4,
         data_dir: str | Path | None = None,
         gate_decisions: str = "",
+        diagnostics: dict | None = None,
     ) -> list[dict]:
-        """批量构建多个子问题的模型（并行，保持返回顺序与输入一致）。"""
+        """批量构建多个子问题的模型（并行，保持返回顺序与输入一致）。
+
+        diagnostics: {子问题: 结构诊断} → 每个子问题生成建模红线注入 prompt。
+        """
+        def _hints(sp: str) -> str:
+            if not diagnostics:
+                return ""
+            from utils.modeling_kb import structure_redline
+            struct = diagnostics.get(sp)
+            if not struct:
+                return ""
+            red = structure_redline(struct)
+            return red or ""
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [
                 executor.submit(
                     self.run, problem_text, sp, algorithm_map.get(sp, "未确定"),
-                    None, data_dir, gate_decisions,
+                    None, data_dir, gate_decisions, _hints(sp),
                 )
                 for sp in sub_problems
             ]

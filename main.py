@@ -161,6 +161,17 @@ def _merge_verified_text(*texts: str) -> str:
     return "\n".join(merged)
 
 
+def _redline_text(struct: dict | None) -> str:
+    """结构诊断 → 建模红线文本（供 Builder 降级重建模复用）。"""
+    if not struct:
+        return ""
+    try:
+        from utils.modeling_kb import structure_redline
+        return structure_redline(struct)
+    except Exception:
+        return ""
+
+
 def _write_verify_report(summary: dict, paper_text: str) -> Path:
     """数值一致性验收报告（9步验收的数值一致性步骤，确定性产物）。
 
@@ -429,6 +440,8 @@ def run_pipeline(
             print(f"  {item['sub_problem'][:40]} -> {item['algorithm']}")
 
         summary["algorithms"] = algorithm_map
+        # 结构诊断（维度/组合/可解析化红线）持久化，供 Builder 与经验库使用
+        summary["diagnostics"] = algo_result.get("diagnostics", {}) or {}
         _notify(progress_callback, "算法", f"主算法: {algo_result['main_algorithm']}")
         _save_checkpoint(summary, start_time)
         if _maybe_stop(until, "算法", summary, start_time):
@@ -479,6 +492,7 @@ def run_pipeline(
             problem_text, sub_problems, algorithm_map,
             data_dir=summary.get("data_dir"),
             gate_decisions=_gate_text,
+            diagnostics=summary.get("diagnostics"),
         )
         summary["models"] = build_results
         _save_checkpoint(summary, start_time)  # 保存建模结果，方便调试
@@ -658,6 +672,10 @@ def run_pipeline(
                         problem_text, sp, algo,
                         feedback=degrade + error_text,
                         data_dir=summary.get("data_dir"),
+                        structure_hints=(
+                            (summary.get("diagnostics") or {}).get(sp)
+                            and _redline_text(summary.get("diagnostics", {}).get(sp))
+                        ) or "",
                     )
 
                 def _try_rebuild(err_text: str) -> None:

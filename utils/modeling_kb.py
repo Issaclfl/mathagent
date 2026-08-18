@@ -193,3 +193,124 @@ def enforce_whitelist(
         if score > best_score:
             best, best_score = w, score
     return best if best else whitelist[0]
+
+
+# ══════════════════════════════════════════════════════════
+# 问题结构诊断（确定性规则）：维度估计 + 组合结构 + 可解析化
+# + 边界风险 → 生成【建模策略红线】注入 Modeler/Builder
+#
+# 背景（2025A 实测暴露）：8 维三弹优化用了网格搜索 → 5.30s 次优
+# （差分进化 6.9s）；遮蔽评估用离散采样 → 阶梯函数不可导，梯度方法
+# 全失效。方向性错误一旦发生，后续修复链都在错误方向上打转。
+# 结构诊断让智能体在写代码前先"想清楚问题长什么样"。
+# ══════════════════════════════════════════════════════════
+
+# 决策变量个数线索：N 枚/架/个/辆 + 每单位几个参数（如"每枚弹的投放时刻与起爆间隔"）
+_DIM_HINTS = [
+    # 数量词："3枚烟幕干扰弹" / "5架无人机" / "三枚导弹"（含中文数字）
+    (r"([一二三四五六七八九十\d]+)\s*[枚架颗发辆个座](?:(?!，|。|；).){0,8}?(?:弹|机|车|无人机|导弹)", 2),
+    (r"(?:同时优化|决策变量为|变量为).{0,30}?([θxθv]|theta|速度|时刻|间隔|角度)", 4),
+]
+
+_CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6,
+           "七": 7, "八": 8, "九": 9, "十": 10, "两": 2}
+
+# 组合/协同结构关键词 → 提示解耦
+_COMBINE_HINTS = ["并集", "组合", "协同", "接力", "分配", "覆盖", "时序", "多弹", "多机",
+                  "多目标", "衔接", "调度", "轮流", "分层"]
+
+# 可解析化评估关键词（物理求根类）
+_ANALYTIC_HINTS = ["遮蔽", "遮挡", "相交", "视线", "云团", "区间", "时长", "覆盖时间",
+                   "穿透", "投影", "最短距离", "球", "半径", "线段"]
+
+# 约束边界风险关键词（最优贴边界提示截断）
+_BOUNDARY_HINTS = ["至少", "不低于", "不超过", "上限", "下限", "范围", "最大", "最小",
+                   "间隔", "限制", "约束"]
+
+
+def analyze_problem_structure(sub_problem: str) -> dict:
+    """确定性诊断子问题的建模结构（零 LLM 调用）。
+
+    Returns:
+        {
+          "dim_estimate": int,      # 决策空间维度估计（0=未知）
+          "has_combination": bool,  # 组合/协同结构
+          "has_analytic": bool,     # 评估函数疑似可解析化
+          "has_boundary_risk": bool,# 约束边界风险
+        }
+    """
+    text = sub_problem or ""
+    dim = 0
+    # 显式维度：N 维
+    m = re.search(r"(\d+)\s*维", text)
+    if m:
+        dim = max(dim, int(m.group(1)))
+    # 数量词：3枚烟幕干扰弹 → 单位数 × 每单位参数
+    units = []
+    for unit_pat, _ in _DIM_HINTS[:1]:
+        for um in re.finditer(unit_pat, text):
+            token = um.group(1)
+            n = _CN_NUM.get(token) or (int(token) if token.isdigit() else 1)
+            units.append(max(n, 1))
+    if units:
+        param_count = sum(
+            1 for kw in ("时刻", "间隔", "速度", "角度", "方向", "位置", "起爆")
+            if kw in text
+        )
+        per_unit = max(2, param_count)
+        dim = max(dim, max(units) * per_unit)
+    # 变量列举
+    if "变量" in text or "参数" in text:
+        var_kws = [k for k in ("时刻", "间隔", "速度", "角度", "方向", "投放", "起爆") if k in text]
+        dim = max(dim, len(var_kws))
+    # 组合结构下多单位/多目标：高维估计兜底（"多弹/多机/多目标" + 组合结构）
+    has_comb = any(k in text for k in _COMBINE_HINTS)
+    if has_comb:
+        multi_units = sum(1 for u in units if u >= 2) + (1 if "多" in text else 0)
+        if multi_units >= 2 or any(k in text for k in ("多弹", "多机", "多目标", "协同")):
+            dim = max(dim, 8)
+    return {
+        "dim_estimate": dim,
+        "has_combination": has_comb,
+        "has_analytic": any(k in text for k in _ANALYTIC_HINTS),
+        "has_boundary_risk": any(k in text for k in _BOUNDARY_HINTS),
+    }
+
+
+def structure_redline(struct: dict) -> str:
+    """由结构诊断生成【建模策略红线】文本（注入 Modeler/Builder prompt）。"""
+    lines = ["【建模策略红线（问题结构诊断，必须遵守）】"]
+    dim = struct.get("dim_estimate", 0)
+    if dim > 0:
+        if dim >= 6:
+            lines.append(
+                f"- 决策空间估计 {dim} 维（≥6 维连续优化）：禁止网格搜索/枚举——维数灾难下"
+                "网格会系统性次优（实测 8 维三弹问题网格 5.30s vs 差分进化 6.9s）；"
+                "必须用差分进化 / 遗传算法等全局优化器"
+            )
+        elif dim >= 3:
+            lines.append(
+                f"- 决策空间估计 {dim} 维：网格搜索仅适合 ≤2 维；{dim} 维建议"
+                "差分进化或模拟退火等全局方法，网格只能作粗扫找起点"
+            )
+    else:
+        lines.append("- 决策空间维度未知：先明确决策变量再选算法；多变量联合优化优先全局优化器")
+    if struct.get("has_analytic"):
+        lines.append(
+            "- 评估函数疑似可解析化（遮蔽/相交/距离类）：优先解析求根（如球心到线段"
+            "距离的二次方程）而非离散采样——采样使目标函数呈阶梯、不可导，"
+            "梯度优化器全失效且精度受限"
+        )
+    if struct.get("has_combination"):
+        lines.append(
+            "- 存在组合/协同结构（并集/多弹/多机/分配）：先解耦——下层单资源最优"
+            "区间预计算，上层按区间调度/并集组合选择；直接联合优化高维空间难收敛"
+        )
+    if struct.get("has_boundary_risk"):
+        lines.append(
+            "- 存在约束边界风险：最优解贴边界（如间隔=下限）时可能被截断，"
+            "需检查并说明；灵敏度分析覆盖边界两侧"
+        )
+    if len(lines) == 1:
+        return ""
+    return "\n".join(lines)

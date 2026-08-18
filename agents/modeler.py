@@ -7,9 +7,10 @@ from pathlib import Path
 
 from agents.base import BaseAgent
 from utils.config import get
-from utils.experience import _classify, algorithm_prior
+from utils.experience import _classify, algorithm_prior, lessons_for
 from utils.modeling_kb import (
     classify_problem, algo_whitelist, kb_text, enforce_whitelist,
+    analyze_problem_structure, structure_redline,
 )
 
 SYSTEM_PROMPT = "你是一位数学建模专家，精通各类建模算法，擅长为不同问题匹配合适的解法。"
@@ -162,12 +163,44 @@ class ModelerAgent(BaseAgent):
         self.update_state("problem_type", ptype)
         self.logger.info(f"题型判定：{ptype}，白名单 {len(whitelist)} 个算法")
 
+        # 问题结构诊断（确定性规则，零 LLM）：维度/组合/可解析化/边界风险
+        # → 每个子问题生成【建模策略红线】，防止 LLM 默认走网格搜索等次优方向
+        # （2025A 实测：8 维三弹优化用网格 → 5.30s vs 差分进化 6.9s）
+        diagnostics: dict[str, dict] = {}
+        redline_lines: list[str] = []
+        for sp in sub_problems:
+            struct = analyze_problem_structure(sp)
+            diagnostics[sp] = struct
+            red = structure_redline(struct)
+            if red:
+                redline_lines.append(f"子问题「{sp[:40]}」：\n{red}")
+        self.update_state("diagnostics", diagnostics)
+        if redline_lines:
+            self.logger.info(f"结构诊断：{sum(1 for d in diagnostics.values() if d['dim_estimate'] > 0)} 个子问题检出维度")
+
+        # 经验库先验：决策教训（种子 + 历史）注入，让"第一次"就有方向
+        lesson_lines: list[str] = []
+        for sp in sub_problems:
+            for l in lessons_for(sp):
+                if l not in lesson_lines:
+                    lesson_lines.append(l)
+
         prompt = USER_PROMPT_TEMPLATE.format(
             problem_text=problem_text,
             sub_problems_text=sub_problems_text,
             algorithm_pool="、".join(sorted(pool)),
             knowledge_base=kb_text(ptype, whitelist),
         )
+        if redline_lines:
+            prompt += (
+                "\n\n【建模策略红线——必须据此选择算法，禁止与红线冲突】\n"
+                + "\n".join(redline_lines)
+            )
+        if lesson_lines:
+            prompt += (
+                "\n\n【历史经验教训——同类问题的已知坑，算法选择时必须避开】\n"
+                + "\n".join(lesson_lines)
+            )
 
         # 经验库先验：同类历史任务中成功率高的算法优先
         prior_lines: list[str] = []
@@ -266,6 +299,7 @@ class ModelerAgent(BaseAgent):
             "main_algorithm": main_algo,
             "sub_algorithms": aligned,
             "reason": data.get("reason") or "无",
+            "diagnostics": diagnostics,
         }
 
 
