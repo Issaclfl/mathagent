@@ -17,6 +17,25 @@ def check(name, cond, detail=""):
     print(f"  {'✓' if cond else '✗ FAIL'} {name}" + (f" | {detail}" if detail and not cond else ""))
 
 
+print("== 真实拆题文本（2025A 实际拆解结果，定性量词）==")
+# LLM 拆题不写数字："多枚"而非"3枚"（实测 2025A 全定性化）
+real_subs = [
+    "烟幕干扰弹运动与遮蔽效果模型",
+    "无人机投放策略约束与运动模型",
+    "单无人机投放单枚烟幕干扰弹的优化策略",
+    "单无人机投放多枚烟幕干扰弹的优化策略",
+    "多无人机协调投放烟幕干扰弹的优化策略",
+]
+sr = [analyze_problem_structure(sp) for sp in real_subs]
+check("子问题3（单弹）维度 2-4 不误报高维",
+      1 <= sr[2]["dim_estimate"] <= 4, f"dim={sr[2]['dim_estimate']}")
+check("子问题4（多枚）检出高维", sr[3]["dim_estimate"] >= 6, f"dim={sr[3]['dim_estimate']}")
+check("子问题4 检出组合结构", sr[3]["has_combination"])
+check("子问题5（多机协调）检出高维", sr[4]["dim_estimate"] >= 6, f"dim={sr[4]['dim_estimate']}")
+check("子问题5 检出组合结构", sr[4]["has_combination"])
+check("子问题1/2（模型构建）不误报高维", sr[0]["dim_estimate"] < 6 and sr[1]["dim_estimate"] < 6,
+      f"dims={sr[0]['dim_estimate']},{sr[1]['dim_estimate']}")
+
 print("== analyze_problem_structure ==")
 # 2025A Q3：8 维三弹时序优化（网格搜索次优的实证场景）
 s = analyze_problem_structure("针对M1，优化无人机FY1投放3枚烟幕干扰弹的时序策略，使总遮蔽时长最长")

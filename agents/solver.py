@@ -283,6 +283,40 @@ def _check_result_sanity(metrics: dict, stdout: str) -> str | None:
                 if v < 0 or v > 100:
                     problems.append(f"{key}={v} 超出合理范围[0,100]")
 
+    # 4. 全零/极小结果检测（2025A 实测）：遮蔽时长/覆盖类指标为 0
+    #    通常是几何判定条件写反、坐标系错误等物理 bug——代码"能跑"但结果无意义。
+    #    分两档：
+    #    强非零键（时长/遮蔽/覆盖）：物理上几乎不可能为 0（如导弹飞行全程
+    #      总有某时刻被云团遮挡）→ 任意为 0 即告警
+    #    弱键（距离/区间/路径）：0 可能合法（如无遮蔽区间）→ 全部为 0 才告警
+    STRONG_ZERO = ("时长", "遮蔽", "覆盖", "duration", "shadow", "obscur",
+                   "coverage", "遮蔽时长")
+    WEAK_ZERO = ("距离", "区间", "路径", "时间", "distance", "interval",
+                 "path", "time", "收益", "利润", "产量", "吞吐", "服务", "length")
+
+    strong_zero_keys = [
+        k for k, values in numbers.items()
+        if any(t in k for t in STRONG_ZERO)
+        and any(abs(v) < 1e-9 for v in values)
+    ]
+    if strong_zero_keys:
+        problems.append(
+            f"{'、'.join(strong_zero_keys[:3])} 为 0——疑似几何判定/物理条件"
+            "写反或坐标系错误，结果无意义"
+        )
+    else:
+        weak_keys = [
+            k for k, values in numbers.items()
+            if any(t in k for t in WEAK_ZERO)
+        ]
+        if weak_keys and all(
+            all(abs(v) < 1e-9 for v in numbers[k]) for k in weak_keys
+        ):
+            problems.append(
+                f"{'、'.join(weak_keys[:3])} 等指标全部为 0——"
+                "疑似几何判定/物理条件写反或坐标系错误，结果无意义"
+            )
+
     if problems:
         return "；".join(problems[:5])
     return None

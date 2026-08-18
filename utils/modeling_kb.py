@@ -216,8 +216,8 @@ _CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6,
            "七": 7, "八": 8, "九": 9, "十": 10, "两": 2}
 
 # 组合/协同结构关键词 → 提示解耦
-_COMBINE_HINTS = ["并集", "组合", "协同", "接力", "分配", "覆盖", "时序", "多弹", "多机",
-                  "多目标", "衔接", "调度", "轮流", "分层"]
+_COMBINE_HINTS = ["并集", "组合", "协同", "协调", "接力", "分配", "覆盖", "时序", "多弹", "多枚",
+                  "多机", "多目标", "衔接", "调度", "轮流", "分层"]
 
 # 可解析化评估关键词（物理求根类）
 _ANALYTIC_HINTS = ["遮蔽", "遮挡", "相交", "视线", "云团", "区间", "时长", "覆盖时间",
@@ -245,19 +245,27 @@ def analyze_problem_structure(sub_problem: str) -> dict:
     m = re.search(r"(\d+)\s*维", text)
     if m:
         dim = max(dim, int(m.group(1)))
-    # 数量词：3枚烟幕干扰弹 → 单位数 × 每单位参数
-    units = []
-    for unit_pat, _ in _DIM_HINTS[:1]:
-        for um in re.finditer(unit_pat, text):
-            token = um.group(1)
-            n = _CN_NUM.get(token) or (int(token) if token.isdigit() else 1)
-            units.append(max(n, 1))
+    # 单位数：数字量词（3枚）+ 定性量词（多枚/单枚/若干——LLM 拆题
+    # 常写"多枚烟幕干扰弹"而非"3枚"，实测 2025A 拆题全部定性化）
+    units: list[int] = []
+    for um in re.finditer(r"([一二三四五六七八九十\d]+)\s*[枚架颗发辆个座](?:(?!，|。|；).){0,8}?(?:弹|机|车|无人机|导弹)", text):
+        token = um.group(1)
+        units.append(max(_CN_NUM.get(token) or (int(token) if token.isdigit() else 1), 1))
+    for qual, n in (
+        (r"多(?:枚|弹|机|架|辆|个|目标|无人机|架次)", 3),
+        (r"(?:若干|数|几)(?:枚|弹|机|架|辆|个)", 3),
+        (r"单(?:枚|弹|机|架|辆|个|无人机)", 1),
+        (r"各(?:枚|弹|机|架|辆|个|无人机)", 2),
+    ):
+        if re.search(qual, text):
+            units.append(n)
     if units:
+        # 每单位参数数：显式参数词优先；优化类无参数词默认 4（θ,v,t_d,τ 类）
         param_count = sum(
             1 for kw in ("时刻", "间隔", "速度", "角度", "方向", "位置", "起爆")
             if kw in text
         )
-        per_unit = max(2, param_count)
+        per_unit = max(param_count, 4 if "优化" in text else 2)
         dim = max(dim, max(units) * per_unit)
     # 变量列举
     if "变量" in text or "参数" in text:
@@ -267,7 +275,7 @@ def analyze_problem_structure(sub_problem: str) -> dict:
     has_comb = any(k in text for k in _COMBINE_HINTS)
     if has_comb:
         multi_units = sum(1 for u in units if u >= 2) + (1 if "多" in text else 0)
-        if multi_units >= 2 or any(k in text for k in ("多弹", "多机", "多目标", "协同")):
+        if multi_units >= 2 or any(k in text for k in ("多弹", "多机", "多目标", "协同", "协调")):
             dim = max(dim, 8)
     return {
         "dim_estimate": dim,
