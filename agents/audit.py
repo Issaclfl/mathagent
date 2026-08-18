@@ -101,6 +101,29 @@ class LogicAuditor:
                 "severity": "高",
                 "section": "全文",
             })
+        # 假成功检测：status=ok 但数值可疑（体检告警）或未通过数值验证——
+        # 结构齐全的论文照样可能数值全错（2025A 实测：遮蔽时长 0.0 被门控
+        # 打了逻辑 10 分满分，完全掩盖物理错误）。此类结果必须降分，
+        # 否则门控的"通过"是虚假信号
+        suspicious = []
+        for e in execs:
+            if not isinstance(e, dict) or e.get("status") != "ok":
+                continue
+            sp = (e.get("sub_problem", "") or "")[:20]
+            if e.get("sanity_issue"):
+                suspicious.append(f"「{sp}」数值异常：{e['sanity_issue'][:60]}")
+            elif e.get("verification_status") not in ("verified_metrics", None):
+                suspicious.append(f"「{sp}」数值未验证（{e.get('verification_status')}）")
+        if suspicious:
+            issues.append({
+                "problem": (
+                    f"{len(suspicious)} 个子问题执行成功但数值可疑/未验证："
+                    + "；".join(suspicious[:3])
+                    + "。论文中的这些数值不可信，需修复求解代码后重跑"
+                ),
+                "severity": "高",
+                "section": "数值结果",
+            })
         score = _clamp10((len(self.CHECKS) - len(issues)) / len(self.CHECKS) * 10)
         return {
             "score": score,
