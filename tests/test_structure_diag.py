@@ -70,7 +70,23 @@ ls2 = lessons_for("预测未来24小时各站点需求量")
 check("预测题不误命中优化教训", len(ls2) == 0, str(ls2))
 
 print("== SEED_LESSONS 完整性 ==")
-check("种子教训 3 条", len(SEED_LESSONS) == 3)
+check("种子教训 6 条", len(SEED_LESSONS) == 6)
+
+print("== 新增种子教训（计算失败类）==")
+ls_judge = lessons_for("优化遮蔽判定函数，使遮蔽时长最长")
+check("命中遮蔽判定教训", any("判定条件写反" in l for l in ls_judge), str(ls_judge))
+ls_read = lessons_for("读取数据文件，FileNotFoundError 时使用默认值")
+check("命中数据读取教训", any("静默" in l or "假数据" in l for l in ls_read), str(ls_read))
+ls_empty = lessons_for("代码空跑，metrics.json 为空")
+check("命中空跑教训", any("空跑" in l for l in ls_empty), str(ls_empty))
+
+print("== _has_real_computation ==")
+from agents.solver import _has_real_computation
+check("循环代码有计算", _has_real_computation("for i in range(10): x += i"))
+check("scipy代码有计算", _has_real_computation("from scipy.optimize import minimize\nminimize(f, x0)"))
+check("函数+返回有计算", _has_real_computation("def f(x):\n    return x**2\nresult = f(3)"))
+check("纯print无计算", not _has_real_computation("print('hello')\nprint('world')"))
+check("纯赋值无计算", not _has_real_computation("x = 1\ny = 2\nprint(x + y)"))
 
 print(f"\n结果: {len(PASS)} 通过, {len(FAIL)} 失败")
 if FAIL:

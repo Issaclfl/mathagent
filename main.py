@@ -580,6 +580,34 @@ def run_pipeline(
             )
             fig_base.mkdir(parents=True, exist_ok=True)
 
+            def _audit_code_logic(error_text: str, code: str) -> str:
+                """代码审计：让 LLM 分析代码逻辑错误（不重写，只诊断）。
+
+                返回诊断结论字符串，供降级重建模时作为精准修复方向。
+                比直接让 LLM 重写更高效——避免在错误方向上反复重试。
+                """
+                try:
+                    from agents.base import BaseAgent
+                    _auditor = BaseAgent(role="代码审计专家")
+                    audit_prompt = (
+                        "以下Python代码执行后结果异常，请分析代码逻辑错误。\n\n"
+                        f"【执行输出/错误】\n{error_text[:1000]}\n\n"
+                        f"【代码（前2000字符）】\n```python\n{code[:2000]}\n```\n\n"
+                        "请只分析错误原因（不要重写代码），指出：\n"
+                        "1. 哪个判定条件/公式可能写反或错误\n"
+                        "2. 坐标系/单位是否正确\n"
+                        "3. 数据读取是否成功（有无静默降级到默认值）\n"
+                        "4. 中间结果打印是否足够定位问题\n\n"
+                        "输出格式（简短，每项一句话）：\n"
+                        "错误原因: ...\n"
+                        "具体位置: ...\n"
+                        "修复方向: ..."
+                    )
+                    result = _auditor.think(audit_prompt, temperature=0.2)
+                    return (result or "审计未返回结论")[:500]
+                except Exception as e:
+                    return f"审计失败: {e}"
+
             def _solve_one(i: int, sp: str, res: dict) -> dict:
                 """求解单个子问题（含失败修复链），返回 exec_result。
 
@@ -660,12 +688,17 @@ def run_pipeline(
                     """
                     algo = algorithm_map.get(sp, "未确定")
                     degrade = (
-                        "【降级重建模——原方案已失败，必须更换算法】\n"
-                        f"原算法「{algo}」生成的代码执行失败且自动修复无效。"
+                        "【降级重建模——原方案已失败，必须更换算法并修复计算链路】\n"
+                        f"原算法「{algo}」生成的代码执行失败且自动修复无效。\n"
                         "请放弃原算法，改用更简单、可靠、30秒内可完成的方法"
-                        "（如贪心、随机搜索、启发式规则、缩小规模的解析求解）。"
-                        "新方案必须：输出具体数值结果并写入 metrics.json，"
-                        "至少生成一张结果图表。宁可结果次优，不可无结果。\n\n"
+                        "（如贪心、随机搜索、启发式规则、缩小规模的解析求解）。\n\n"
+                        "【计算链路要求——降级时必须优先保证】\n"
+                        "① 先写一个已知答案验证函数（用题目初始条件计算可手算验证的值）\n"
+                        "② 判定函数必须用'明显通过'和'明显不通过'的案例自测\n"
+                        "③ 每步计算必须 print 中间结果（坐标、距离、判定）\n"
+                        "④ metrics.json 必须写入至少一个非零核心指标\n"
+                        "⑤ 物理/几何题必须画示意图验证\n"
+                        "宁可结果次优，不可无结果。先确保计算链路正确，再追求最优解。\n\n"
                         "【上次代码执行报错】\n"
                     )
                     return builder.run(
@@ -711,10 +744,11 @@ def run_pipeline(
                             exec_result["agent_loop_fix"] = True
                             exec_result["first_error"] = first_error
                             if exec_result["status"] != "ok":
-                                # Agent Loop 修复后仍失败 → 降级重建模兜底
-                                # （此前此处直接放弃，修复代码失败就没有第二次机会）
-                                print(f" → 修复代码仍失败，降级重建模")
-                                _try_rebuild(first_error)
+                                # Agent Loop 修复后仍失败 → 代码审计 + 降级重建模
+                                # 先审计代码逻辑错误（不重写），获取更精准的修复方向
+                                _audit_info = _audit_code_logic(first_error, code)
+                                print(f" → 修复代码仍失败，代码审计: {_audit_info[:80]}...")
+                                _try_rebuild(first_error + "\n\n【代码审计结论】\n" + _audit_info)
                         else:
                             # Agent Loop 未能修复，回退到 Builder 重试（带降级指令）
                             print(f" → 回退到 Builder 重试（含算法降级指令）")

@@ -15,8 +15,19 @@ from agents.base import BaseAgent
 from agents.builder import validate_code, check_dependencies
 from utils.config import get
 
-SYSTEM_PROMPT = """你是一位 Python 调试专家，擅长根据报错信息修复代码。
-你会收到一段代码和运行时的报错信息，请分析错误原因并返回修正后的完整代码。
+SYSTEM_PROMPT = """你是一位 Python 调试专家，擅长定位和修复数值计算代码中的错误。
+
+你特别擅长以下场景：
+- 全零结果：通常是判定条件写反（如 < 写成 >）、坐标系不一致、数据读取失败
+- 数值溢出/NaN：通常是单位未换算、除零、量纲不一致
+- 空跑（returncode=0 但无产出）：通常是计算逻辑被条件分支跳过
+
+修复原则：
+1. 先看 stdout 中的中间结果，定位具体哪一步出错
+2. 不要重写整个代码，只修改错误部分
+3. 修复后必须增加已知答案验证步骤（用题目初始条件算一个可手算验证的值）
+4. 涉及判定的函数必须用"明显通过"和"明显不通过"的案例自测
+
 只返回修正后的代码，不要额外解释。
 """
 
@@ -187,6 +198,24 @@ def _truncate_stderr(text: str, max_len: int = 500) -> str:
     return text[:head] + "\n... [中间省略] ...\n" + text[-tail:]
 
 
+def _has_real_computation(code: str) -> bool:
+    """检测代码是否包含真正的数值计算（而非空跑）。
+
+    空跑特征：只有 print/赋值/import，没有循环/优化器/数值运算。
+    计算特征：for/while 循环、scipy.optimize、numpy 运算、函数定义+返回值。
+    """
+    indicators = [
+        "for ", "while ", "scipy", "optimize", "minimize",
+        "np.", "numpy", "math.", "sqrt", "sin", "cos",
+    ]
+    has_loop_or_optimize = any(ind in code for ind in indicators[:6])
+    # 函数定义+返回值 = 有计算逻辑（排除纯 print 的辅助函数）
+    has_function = (
+        re.search(r"def\s+\w+.*?:\s*\n(?:.*\n)*?.*return\s+", code) is not None
+    )
+    return has_loop_or_optimize or has_function
+
+
 def _extract_metrics(stdout: str) -> dict:
     """从代码 stdout 中提取结构化关键指标。
 
@@ -248,16 +277,20 @@ def _extract_metrics(stdout: str) -> dict:
     return metrics
 
 
-def _check_result_sanity(metrics: dict, stdout: str) -> str | None:
+def _check_result_sanity(metrics: dict, stdout: str) -> dict | None:
     """检查执行结果是否物理/逻辑上合理。
 
     检测"代码能跑但结果错误"的情况（如误差>100%、负值不合理、量级异常），
     这类问题无法通过报错捕获，但会直接导致论文数值不可信。
 
     Returns:
-        发现问题时返回描述字符串，否则返回 None。
+        发现问题时返回 {"problem": str, "detail": str, "hint": str}，
+        否则返回 None。
+        - problem: 问题类型（zero_value / negative / out_of_range / large_error）
+        - detail: 问题描述（可直接嵌入 prompt）
+        - hint: 具体修复方向
     """
-    problems: list[str] = []
+    problems: list[dict] = []
 
     # 1. 误差/分数类指标不应为负
     numbers = metrics.get("numbers", {})
@@ -266,14 +299,22 @@ def _check_result_sanity(metrics: dict, stdout: str) -> str | None:
             if key in ("MAE", "RMSE", "accuracy", "precision", "recall", "f1",
                        "覆盖率", "满足率", "得分", "score"):
                 if v < 0:
-                    problems.append(f"{key}={v} 为负值，不合理")
+                    problems.append({
+                        "problem": "negative",
+                        "detail": f"{key}={v} 为负值，不合理",
+                        "hint": "检查目标函数符号（最小化 vs 最大化）或误差计算公式",
+                    })
 
     # 2. 相对误差/百分比过大（>50%）视为拟合失败
     for key, values in numbers.items():
         if any(k in key for k in ("误差", "error", "err")):
             for v in values:
                 if v > 50:
-                    problems.append(f"{key}={v} 误差过大（>50%），疑似拟合失败")
+                    problems.append({
+                        "problem": "large_error",
+                        "detail": f"{key}={v} 误差过大（>50%），疑似拟合失败",
+                        "hint": "检查模型公式、数据预处理、参数范围是否合理",
+                    })
 
     # 3. 概率/比率类指标应落在 [0,1] 或 [0,100]
     for key, values in numbers.items():
@@ -281,7 +322,11 @@ def _check_result_sanity(metrics: dict, stdout: str) -> str | None:
                                   "覆盖率", "准确率")):
             for v in values:
                 if v < 0 or v > 100:
-                    problems.append(f"{key}={v} 超出合理范围[0,100]")
+                    problems.append({
+                        "problem": "out_of_range",
+                        "detail": f"{key}={v} 超出合理范围[0,100]",
+                        "hint": "检查公式量纲和归一化处理",
+                    })
 
     # 4. 全零/极小结果检测（2025A 实测）：遮蔽时长/覆盖类指标为 0
     #    通常是几何判定条件写反、坐标系错误等物理 bug——代码"能跑"但结果无意义。
@@ -290,7 +335,7 @@ def _check_result_sanity(metrics: dict, stdout: str) -> str | None:
     #      总有某时刻被云团遮挡）→ 任意为 0 即告警
     #    弱键（距离/区间/路径）：0 可能合法（如无遮蔽区间）→ 全部为 0 才告警
     STRONG_ZERO = ("时长", "遮蔽", "覆盖", "duration", "shadow", "obscur",
-                   "coverage", "遮蔽时长")
+                   "coverage", "遮蔽时长", "interference")
     WEAK_ZERO = ("距离", "区间", "路径", "时间", "distance", "interval",
                  "path", "time", "收益", "利润", "产量", "吞吐", "服务", "length")
 
@@ -300,10 +345,19 @@ def _check_result_sanity(metrics: dict, stdout: str) -> str | None:
         and any(abs(v) < 1e-9 for v in values)
     ]
     if strong_zero_keys:
-        problems.append(
-            f"{'、'.join(strong_zero_keys[:3])} 为 0——疑似几何判定/物理条件"
-            "写反或坐标系错误，结果无意义"
-        )
+        zero_names = "、".join(strong_zero_keys[:3])
+        problems.append({
+            "problem": "zero_value",
+            "detail": f"{zero_names} 为 0——疑似几何判定/物理条件写反或坐标系错误，结果无意义",
+            "hint": (
+                f"【{zero_names} 全为 0 的常见原因】\n"
+                "① 判定条件写反：如距离 < threshold 写成 > threshold\n"
+                "② 坐标系不一致：如 ENU 局部坐标与地心坐标混用\n"
+                "③ 单位未换算：如 km 和 m 混用导致距离计算偏差 1000 倍\n"
+                "④ 数据读取失败：静默使用了全 0 默认值\n"
+                "请先在 stdout 中查看中间结果（坐标、距离、判定），定位具体哪步出错"
+            ),
+        })
     else:
         weak_keys = [
             k for k, values in numbers.items()
@@ -312,13 +366,25 @@ def _check_result_sanity(metrics: dict, stdout: str) -> str | None:
         if weak_keys and all(
             all(abs(v) < 1e-9 for v in numbers[k]) for k in weak_keys
         ):
-            problems.append(
-                f"{'、'.join(weak_keys[:3])} 等指标全部为 0——"
-                "疑似几何判定/物理条件写反或坐标系错误，结果无意义"
-            )
+            zero_names = "、".join(weak_keys[:3])
+            problems.append({
+                "problem": "zero_value",
+                "detail": f"{zero_names} 等指标全部为 0——疑似几何判定/物理条件写反或坐标系错误，结果无意义",
+                "hint": (
+                    "所有物理量指标全为 0，代码可能没有做有效计算。\n"
+                    "请检查：① 判定函数是否正确 ② 数据是否读取成功 ③ 计算是否被条件分支跳过"
+                ),
+            })
 
     if problems:
-        return "；".join(problems[:5])
+        # 合并所有问题
+        p = problems[0]  # 取第一个（最严重）
+        all_details = "；".join(pr["detail"] for pr in problems[:5])
+        return {
+            "problem": p["problem"],
+            "detail": all_details,
+            "hint": p["hint"],
+        }
     return None
 
 
@@ -541,10 +607,13 @@ matplotlib.rcParams['axes.unicode_minus'] = False
             ]
             _stdout_is_error = any(pat in (result.stdout or "") for pat in _error_patterns)
             # returncode=0 且无任何产出（metrics/图/stdout数值全无）→ "空跑"成功
+            # 新增：同时检查代码本身是否包含计算逻辑——纯 print+赋值也是空跑
             _has_numbers = bool(_extract_metrics(result.stdout or "").get("numbers"))
+            _code_has_computation = _has_real_computation(original_code)
             _empty_success = (
                 result.returncode == 0
                 and not metrics_json and not figures and not _has_numbers
+                and not _code_has_computation
             )
             _effective_success = (
                 result.returncode == 0 and not _stdout_is_error and not _empty_success
@@ -564,10 +633,15 @@ matplotlib.rcParams['axes.unicode_minus'] = False
                     _fake_parts.append("stdout 中的错误行（修复时优先排查这些位置）:")
                     _fake_parts.extend(f"  {l}" for l in _err_lines)
                 if _empty_success:
+                    _comp_hint = (
+                        "代码本身不含计算逻辑（无循环/优化器/数值运算）"
+                        if not _code_has_computation
+                        else "代码含计算逻辑但未输出结果"
+                    )
                     _fake_parts.append(
-                        "metrics.json 为空且无图表、无数值输出——代码未做实际计算，"
-                        "或计算结果未落盘。请确保：核心指标写入 metrics.json，"
-                        "并至少生成一张结果图表"
+                        f"metrics.json 为空且无图表、无数值输出——{_comp_hint}。"
+                        "请确保：① 核心指标写入 metrics.json ② 至少生成一张结果图表 "
+                        "③ 即使无优化结果也要输出当前参数下的评估值（如遮蔽时长=0 也要打印出来）"
                     )
                 _fake_error = "\n".join(_fake_parts)
                 result.stderr = (result.stderr + "\n" + _fake_error).strip() if result.stderr else _fake_error
@@ -666,13 +740,27 @@ matplotlib.rcParams['axes.unicode_minus'] = False
                 sanity_issue = _check_result_sanity(merged_metrics, exec_result["stdout"])
                 if sanity_issue and attempt < max_retries:
                     self.logger.warning(
-                        f"第{attempt}次执行成功但结果不合理: {sanity_issue}"
+                        f"第{attempt}次执行成功但结果不合理: {sanity_issue['detail']}"
                     )
+                    # 截取 stdout 中的中间结果供 LLM 定位错误
+                    _stdout_excerpt = (exec_result.get("stdout") or "")[:1500]
                     sanity_prompt = f"""以下Python代码执行成功，但输出结果存在物理/逻辑不合理：
-问题：{sanity_issue}
 
-请修复代码（可能是模型公式错误、单位错误、参数不合理或数据处理错误），
-确保输出数值合理。请返回修正后的完整代码。
+【问题诊断】
+{sanity_issue['detail']}
+
+【修复方向】
+{sanity_issue['hint']}
+
+【代码执行的 stdout（包含中间结果，请据此定位具体哪一步出错）】
+{_stdout_excerpt}
+
+【修复要求——必须遵守】
+1. 先分析 stdout 中的中间结果，定位具体哪一步计算出错
+2. 修复判定条件/公式/坐标系（不要重写整个代码，只修改错误部分）
+3. 增加已知答案验证：用题目给的初始条件算一个可手算验证的值
+4. 涉及判定的函数必须用"明显通过"和"明显不通过"的案例自测
+5. 确保 metrics.json 中至少有一个非零的核心指标
 
 当前代码：
 ```python
@@ -693,6 +781,7 @@ matplotlib.rcParams['axes.unicode_minus'] = False
                     or metrics.get("tables")
                 )
                 v_status = "verified_metrics" if (not sanity_issue and has_metrics) else "unverified"
+                sanity_detail = sanity_issue["detail"] if isinstance(sanity_issue, dict) else sanity_issue
 
                 self.logger.info(f"代码执行成功（第{attempt}次尝试）")
                 return {
@@ -704,11 +793,12 @@ matplotlib.rcParams['axes.unicode_minus'] = False
                     "attempts": attempt,
                     "missing_deps": exec_result.get("missing_deps"),
                     "figures": exec_result.get("figures", []),
-                    "sanity_issue": sanity_issue,
+                    "sanity_issue": sanity_detail,
+                    "sanity_diagnosis": sanity_issue if isinstance(sanity_issue, dict) else None,
                     "verification_status": v_status,
                     "verify_note": (
                         None if v_status == "verified_metrics"
-                        else (sanity_issue or "执行成功但无任何可引用指标")
+                        else (sanity_detail or "执行成功但无任何可引用指标")
                     ),
                 }
 

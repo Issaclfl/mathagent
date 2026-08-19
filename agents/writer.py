@@ -46,7 +46,7 @@ PROMPT_TITLE = """\
 4. 只返回标题文本"""
 
 PROMPT_ABSTRACT = """\
-请根据以下信息撰写数学建模论文的摘要（200-300字）。
+请根据以下信息撰写数学建模论文的摘要（150-250字，不超过250字！）。
 
 赛题：{problem_text}
 
@@ -57,31 +57,45 @@ PROMPT_ABSTRACT = """\
 {exec_summary}
 
 要求：
-1. 摘要必须包含**具体的量化结论**（如"累计方差贡献率达85.2%"、"站点X水质最优"等）
-2. **【数据填充铁律】**：所有数值**只能**来自代码执行结果摘要（{exec_summary}）中出现的真实值
-   - 若某指标在执行结果中存在，直接引用该数值
-   - 若某指标不存在或执行失败，该处写"—"或省略，**严禁**写"[请填入...]"等占位符
-   - **严禁**凭经验或算法原理编造任何具体数字
-3. 涵盖：问题背景、方法选择、关键结果、主要结论
-4. 最后单独一行输出关键词：3-5个，按重要性降序，格式"关键词：XXX、XXX、XXX"
-5. 语言精炼、学术规范
-6. 只返回摘要正文（含关键词行），不要标题和额外说明
+1. **【篇幅铁律】**：摘要总字数控制在 150-250 字，超过 250 字会被直接删除
+2. **【禁止变量符号】**：摘要中**严禁**出现变量符号（如 t、θ、v、T、Δt 等），全部用中文文字描述
+   - ❌ "在时刻 t 投放干扰弹" → ✅ "在指定时刻投放干扰弹"
+   - ❌ "优化飞行方向 θ 和速度 v" → ✅ "优化飞行方向和速度"
+   - 只有在给出最终数值结果时才可以用单位（如"遮蔽时长 1.79 秒"）
+3. **【每问一句】**：每个子问题只用**一句话**概述做了什么、得到什么结果，不要展开方法细节
+4. **【数据填充铁律】**：所有数值**只能**来自执行结果摘要中的真实值，严禁编造
+5. 涵盖：问题背景（1句）、方法选择（每问1句）、关键结果（每问1句）、主要结论（1句）
+6. 最后单独一行输出关键词：3-5个，格式"关键词：XXX、XXX、XXX"
+7. 语言精炼、学术规范
+8. 只返回摘要正文（含关键词行），不要标题和额外说明
 
 {abstract_guide}"""
 
 PROMPT_PROBLEM_RESTATEMENT = """\
-请将以下数学建模赛题进行问题重述。
+请将以下数学建模赛题进行精炼重述。
 
 赛题原文：
 {problem_text}
 
+子问题列表：
+{sub_problems}
+
 要求：
-1. 分为"问题背景"和"问题要求"两部分
-2. 用自己的语言重新表述，不要照抄原文
-3. 使用 Markdown 格式，二级标题用 ### 1.1 和 ### 1.2"""
+1. **【篇幅铁律】**：总篇幅控制在 **半页到1页**（约 200-400 字），超过会被删除
+2. **【禁止生成章节标题】**：不要输出"一、问题重述""二、问题的提出"等标题，系统会自动添加
+3. **问题背景**（1段，约100字）：
+   - 用精炼的语言描述问题场景
+   - 直接给出关键参数数值（不要说"题目给定了参数"，直接列出）
+4. **各子问题**（每题1段，3-5句）：
+   - 直接列出问题1、问题2...的内容
+   - 每个子问题用1-2句话说明要做什么
+5. 用自己的语言重新表述，不要照抄原文
+6. 使用 Markdown 格式
+
+{analysis_guide}"""
 
 PROMPT_PROBLEM_ANALYSIS = """\
-请对以下子问题逐一进行问题分析。
+请对以下子问题逐一进行问题分析（参考优秀论文格式：每题1段，5-8行）。
 
 赛题背景：{problem_text}
 
@@ -98,20 +112,18 @@ PROMPT_PROBLEM_ANALYSIS = """\
 {exec_status}
 
 要求：
-1. 先写一段总述（本题学科分类与数学本质），再列 3-5 个核心难点（难点|原因|解决思路），
-   然后用一段说明总体技术路线，最后逐题分析
-2. 每个子问题分析其数学本质和求解思路，并说明各子问题之间的递进关系
-3. **【一致性铁律】**方法描述必须与"实际模型摘要"严格一致：摘要用监督分类
-   就写监督分类；严禁引入摘要中不存在的方法（如摘要为 MLP 分类，不得写
-   自编码器/聚类/无监督学习）。执行失败的子问题，分析结尾注明该部分
-   因规模/求解困难降级处理，与后文保持一致
-4. 每个子问题用二级标题，**不要输出章节大标题**（如"二、问题分析"由系统统一添加）
-5. 使用 Markdown 格式
+1. **【篇幅铁律】**：每个子问题的分析**只有1段（5-8行）**，不要展开
+2. 每段直接说明：用什么方法解决、关键步骤是什么
+3. **不要**写"总述""核心难点""技术路线"等铺垫——直接逐题分析
+4. **不要**写"首先…其次…再次…"的机械列举
+5. **【一致性铁律】**方法描述必须与"实际模型摘要"严格一致
+6. **【禁止生成章节标题】**：不要输出"二、问题分析""问题1分析"等标题，系统会自动添加
+7. 使用 Markdown 格式，每个子问题用**加粗**标题（如"**问题1分析**"）
 
 {analysis_guide}"""
 
 PROMPT_ASSUMPTIONS = """\
-请为以下数学建模问题列出合理的模型假设。
+请为以下数学建模问题列出模型假设（参考优秀论文格式）。
 
 赛题：
 {problem_text}
@@ -120,12 +132,19 @@ PROMPT_ASSUMPTIONS = """\
 {sub_problems}
 
 要求：
-1. 列出 5-8 条假设
-2. 每条假设需说明合理性
-3. 假设之间不能自相矛盾（例如：不能同时假设"现有站点能代表整体"和"需要减少站点"）
-4. **已知的题目条件不属于假设**（如题目给出的速度、半径、持续时间等是已知量，不列入假设；
-   假设只包含你主动简化/忽略的部分，如"忽略空气阻力""假设风速为0"）
-5. 只返回假设列表，编号用 1, 2, 3..."""
+1. **【格式铁律——必须严格遵守】**：每条假设用"**粗体标题**：一句话解释"格式
+   - ❌ "烟幕干扰弹脱离无人机后，其运动仅受重力作用，空气阻力及其可能带来的减速与轨迹偏转效应忽略不计。此假设旨在简化弹道模型..."
+   - ✅ "**忽略空气阻力**：干扰弹仅受重力作用"
+   - ✅ "**刚体假设**：无人机视为质点，不考虑形变"
+   每条总共不超过30字（含标题和解释）
+2. 列出 4-6 条假设，编号用 1, 2, 3...
+3. 常见假设类型（参考优秀论文）：
+   - 保真性假设：题目给出的数据准确可靠
+   - 简化假设：忽略次要因素（空气阻力、风力等）
+   - 平稳性假设：系统参数恒定（温度、速度等）
+   - 理想化假设：连接/碰撞等为理想情况
+4. **已知的题目条件不属于假设**（如题目给出的速度、半径等是已知量）
+5. 只返回假设列表，每条一行，不要额外说明"""
 
 PROMPT_SYMBOLS = """\
 请为以下数学建模问题设计符号说明表。
@@ -138,14 +157,13 @@ PROMPT_SYMBOLS = """\
 {model_digests}
 
 要求：
-1. 只列出实际模型公式中**实际会出现**的符号，不要列出未引用的符号；
-   同一概念全文只用一个符号（如需求量统一记为某一符号，不得各章各用一套）
-2. 符号按出现逻辑顺序排列：先全局常量 → 再决策变量 → 再中间变量 → 最后结果量
-3. 数学符号使用 LaTeX 格式：变量用斜体（如 $t_d$），常量用正体（如 $g$）
-4. 使用 Markdown 表格格式：| 符号 | 含义 | 单位 |
-5. 按模型模块分组（如"基础数据"、"评价模型"、"预测模型"等）
-6. 单位缺失的条目标注"—"或"无量纲"
-7. 符号数量控制在 20-30 个，精简为主"""
+1. **只写全局变量**：临时变量（循环变量、中间计算量）不需要列出，只写贯穿全文的核心符号
+2. 只列出实际模型公式中**实际会出现**的符号，不要列出未引用的符号；
+   同一概念全文只用一个符号
+3. 符号按出现逻辑顺序排列：先全局常量 → 再决策变量 → 再中间变量 → 最后结果量
+4. 数学符号使用 LaTeX 格式：变量用斜体（如 $t_d$），常量用正体（如 $g$）
+5. 使用三线表格式：| 符号 | 含义 | 单位 |
+6. 符号数量控制在 10-20 个，精简为主（优秀论文通常只有10-15个核心符号）"""
 
 PROMPT_MODEL_SECTION = """\
 请为以下子问题撰写"模型建立与求解"章节。
@@ -336,6 +354,7 @@ class WriterAgent(BaseAgent):
         )
 
         # ── 并行生成独立章节 ──────────────────────────────────
+        # ★ 参考优秀论文结构：问题重述(精炼) + 问题分析(每题1段) + 假设(粗体+1句) ★
         self.logger.info("并行生成独立章节（摘要/重述/分析/假设/评价）...")
         independent_tasks = {
             "abstract": PROMPT_ABSTRACT.format(
@@ -346,6 +365,8 @@ class WriterAgent(BaseAgent):
             ) + _fb_block("摘要"),
             "restatement": PROMPT_PROBLEM_RESTATEMENT.format(
                 problem_text=problem_text[:2000],
+                sub_problems="\n".join(f"{i+1}. {sp}" for i, sp in enumerate(sub_problems)),
+                analysis_guide=ANALYSIS_GUIDE,
             ) + _fb_block("问题重述"),
             "analysis": PROMPT_PROBLEM_ANALYSIS.format(
                 problem_text=problem_text[:1200],
@@ -468,6 +489,7 @@ class WriterAgent(BaseAgent):
             references = self._gen_references_static(algorithms)
 
         # ── 拼接完整论文 ──────────────────────────────────────
+        # ★ 参考优秀论文结构：重述(精炼) + 分析(每题1段) + 假设(粗体+1句) ★
         ch = {name: self._chapter_index(name) for name in [
             "问题重述", "问题分析", "模型假设", "符号说明",
             "模型建立与求解", "灵敏度分析", "模型评价与推广",
@@ -475,13 +497,21 @@ class WriterAgent(BaseAgent):
         paper_parts = [f"# {title}"]
 
         paper_parts.append(f"## 摘要\n\n{sections.get('abstract', '')}")
+        # ★ 问题重述：精炼重述，1页以内 ★
         paper_parts.append(f"## {ch['问题重述']}、问题重述\n\n{sections.get('restatement', '')}")
+        # ★ 问题分析：每题1段，5-8行 ★
         paper_parts.append(f"## {ch['问题分析']}、问题分析\n\n{sections.get('analysis', '')}")
+        # ★ 模型假设：粗体标题+1句 ★
         paper_parts.append(f"## {ch['模型假设']}、模型假设\n\n{sections.get('assumptions', '')}")
+        # ★ 符号说明：10-20个全局变量，三线表 ★
         paper_parts.append(f"## {ch['符号说明']}、符号说明\n\n{symbols}")
+        # ★ 模型建立与求解：核心章节，公式密集 ★
         paper_parts.append(f"## {ch['模型建立与求解']}、模型建立与求解\n\n" + "\n\n".join(model_sections))
+        # ★ 灵敏度分析：2-3个参数扰动 ★
         paper_parts.append(f"## {ch['灵敏度分析']}、灵敏度分析\n\n{sensitivity}")
+        # ★ 模型评价与推广：优点/缺点/推广 ★
         paper_parts.append(f"## {ch['模型评价与推广']}、模型评价与推广\n\n{sections.get('evaluation', '')}")
+        # ★ 参考文献 ★
         paper_parts.append(f"## 参考文献\n\n{references}")
 
         paper = "\n\n---\n\n".join(paper_parts)
@@ -1038,7 +1068,161 @@ class WriterAgent(BaseAgent):
         # 去除连续空行
         out = "\n".join(cleaned)
         out = re.sub(r"\n{3,}", "\n\n", out).strip()
+
+        # ── 词汇多样性强制替换（去 AI 痕迹）──
+        out = self._enforce_vocab_diversity(out)
+
         return out + "\n"
+
+    @staticmethod
+    def _enforce_vocab_diversity(text: str) -> str:
+        """确定性词汇多样性后处理（零 LLM 调用）。
+
+        融合三个高星去AI味仓库的核心规则：
+        - B1lli/remove-ai-flavor (219★): 中文 AI 句式壳检测
+        - zczjyq/de-AIGC-skill (24★): 16 种模式 + 等量改写
+        - harshaneel/humanize (370★): burstiness/标点指纹/RLHF去除
+
+        使用 re.sub 回调函数实现计数+替换一体化，避免逐词替换时
+        位移导致后续词的匹配位置偏移。
+        """
+        import re
+
+        # ── 第一类：有次数限制的高频词（频率硬限制）──
+        _ROTATION_RULES: list[tuple[str, int, list[str]]] = [
+            ("采用", 5, ["运用", "选用", "借助", "依靠"]),
+            ("通过", 5, ["借助", "依靠", "凭借", "经由"]),
+            ("基于", 3, ["鉴于", "以…为基础"]),
+            ("构建", 3, ["搭建", "建立", "设计"]),
+            ("实现", 3, ["做到", "完成", "达到"]),
+            ("本文", 15, ["该模型", "所建模型", "这一方案", "上述方法", "所提方法"]),
+            ("此外", 3, ["与此同时", "进一步来看", "换个角度看"]),
+            ("另外", 3, ["除此之外", "还有一点", "补充说明"]),
+        ]
+
+        for word, max_count, alternatives in _ROTATION_RULES:
+            counter = {"n": 0}
+
+            def _replacer(m, _w=word, _mc=max_count, _alts=alternatives, _c=counter):
+                _c["n"] += 1
+                if _c["n"] <= _mc:
+                    return _w
+                alt = _alts[(_c["n"] - _mc - 1) % len(_alts)]
+                return alt
+
+            text = re.sub(re.escape(word), _replacer, text)
+
+        # ── 第二类：AI 句式壳检测与替换（来自 B1lli）──
+
+        # 2a. 二元对比壳："不是A，而是B" → 直接陈述B
+        _binary_patterns = [
+            (r"这不是(.{2,15})，而是(.{2,30}。)", r"问题在于\2"),
+            (r"并非(.{2,15})，而是(.{2,30}。)", r"\2"),
+            (r"不只是(.{2,15})，更是(.{2,30}。)", r"\2"),
+        ]
+        for pat, repl in _binary_patterns:
+            text = re.sub(pat, repl, text)
+
+        # 2b. 本质宣称壳："本质上""核心在于" → 删除，直接说
+        _essence_patterns = [
+            r"(?:，\s*)?本质上[，,\s]*",
+            r"(?:，\s*)?核心在于[，,\s]*",
+            r"(?:，\s*)?真正重要的是[，,\s]*",
+            r"(?:，\s*)?底层逻辑[是为]?[，,\s]*",
+        ]
+        for pat in _essence_patterns:
+            text = re.sub(pat, "", text)
+
+        # 2c. 助手路标：直接删除
+        _route_markers = [
+            "值得注意的是，", "值得注意的是,",
+            "总的来说，", "总的来说,",
+            "不可否认的是，", "不可否认的是,",
+            "说白了，", "说白了,",
+            "综上所述，", "综上所述,",
+            "总而言之，", "总而言之,",
+        ]
+        for marker in _route_markers:
+            text = text.replace(marker, "")
+
+        # ── 第三类：机械列举检测 ──
+        _seq_order = ["首先", "其次", "再次", "最后"]
+        _seq_alts = ["此外", "另外", "与此同时", "进一步来看"]
+        lines = text.splitlines()
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            for j, marker in enumerate(_seq_order):
+                if stripped.startswith(marker + "，") or stripped.startswith(marker + "、"):
+                    if j >= 2:
+                        rest = stripped[len(marker):]
+                        lines[i] = _seq_alts[min(j - 2, len(_seq_alts) - 1)] + rest
+                    break
+        text = "\n".join(lines)
+
+        # ── 第四类：标点指纹规范化（来自 harshaneel/humanize + 老师反馈）──
+
+        # 4a. 破折号严格限制：全文最多 3 个（老师明确指出破折号是 AI 特征）
+        _em_dashes = [(m.start(), m.end()) for m in re.finditer("——", text)]
+        if len(_em_dashes) > 3:
+            # 保留前 3 个，后面的替换为逗号
+            for pos, end in reversed(_em_dashes[3:]):
+                text = text[:pos] + "，" + text[end:]
+
+        # 4b. 假设/结论章节：破折号全部删除（这些章节最敏感）
+        lines = text.splitlines()
+        _in_assumption = False
+        _in_conclusion = False
+        for i, line in enumerate(lines):
+            # 检测假设章节
+            if re.match(r"^#{1,3}\s*(?:三|模型假设)", line):
+                _in_assumption = True
+                _in_conclusion = False
+            elif re.match(r"^#{1,3}\s*(?:四|五|六|七|八|模型建立|模型评价|结论)", line):
+                _in_assumption = False
+            # 检测结论/评价章节
+            if re.match(r"^#{1,3}\s*(?:七|八|模型评价|结论|参考文献)", line):
+                _in_conclusion = True
+            elif re.match(r"^#{1,3}\s*(?:三|模型假设)", line):
+                _in_conclusion = False
+            # 在假设/结论章节中，删除所有破折号
+            if _in_assumption or _in_conclusion:
+                if "——" in line:
+                    lines[i] = line.replace("——", "，")
+        text = "\n".join(lines)
+
+        # 4c. 分号限制：全文 ≤3 个
+        _semicolons = [(m.start(), m.end()) for m in re.finditer("；", text)]
+        if len(_semicolons) > 3:
+            for pos, end in reversed(_semicolons[3:]):
+                text = text[:pos] + "。" + text[end:]
+
+        # ── 第五类：RLHF 助手腔检测（来自 harshaneel/humanize）──
+
+        # 删除"一方面…另一方面…"的平衡式权衡
+        text = re.sub(r"一方面.{3,30}[；;]另一方面[，,]?", "", text)
+
+        # 删除结尾总结重述
+        _summary_endings = [
+            "综上所述，", "总而言之，", "总之，",
+            "综上，", "概言之，",
+        ]
+        for ending in _summary_endings:
+            # 只删出现在段落开头的（不是正文中间的）
+            text = re.sub(rf"\n\s*{re.escape(ending)}", "\n", text)
+
+        # ── 第六类：通用 AI 短语替换 ──
+        _phrase_replacements = [
+            ("具有重要意义", "有实际价值"),
+            ("具有广阔的应用前景", "在实际场景中有推广空间"),
+            ("前景广阔", "有进一步探索的空间"),
+            ("此案例印证了", "这一结果说明"),
+            ("为…提供了理论支撑", "从理论上支持了…"),
+            ("在一定程度上", "有所"),  # "在一定程度上提升" → "有所提升"
+        ]
+        for old, new in _phrase_replacements:
+            text = text.replace(old, new)
+
+        return text
 
     @staticmethod
     def _strip_heading_num(title: str) -> str:
